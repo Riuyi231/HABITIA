@@ -15,9 +15,24 @@ let actualizando = false;
 let saltoEstaVersion = false;
 
 // ---------- Auto-actualización (GitHub Releases) ----------
+// La descarga ocurre automáticamente en segundo plano al detectar una versión.
+// Se revisa periódicamente mientras la app está abierta (además del primer
+// chequeo al arrancar), de modo que una actualización publicada llega aunque
+// el programa lleve horas abierto.
+let revisandoUpdate = false;
+function revisarActualizaciones() {
+  if (!app.isPackaged || saltoEstaVersion || revisandoUpdate || actualizando) return;
+  revisandoUpdate = true;
+  return autoUpdater.checkForUpdates()
+    .catch((err) => {
+      console.error('[update] no se pudo consultar actualizaciones:', (err && err.message) || err);
+    })
+    .finally(() => { revisandoUpdate = false; });
+}
+
 function configurarAutoUpdater() {
   if (!app.isPackaged) return;
-  autoUpdater.autoDownload = false;
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = null;
 
@@ -625,13 +640,10 @@ app.whenReady().then(() => {
     createWindow();
   });
   configurarAutoUpdater();
-  setTimeout(() => {
-    if (app.isPackaged && !saltoEstaVersion) {
-      autoUpdater.checkForUpdates().catch((err) => {
-        console.error('[update] no se pudo consultar actualizaciones:', (err && err.message) || err);
-      });
-    }
-  }, 8000);
+  // Primer chequeo poco después de abrir y, luego, revisiones periódicas en
+  // segundo plano mientras se trabaja (sin necesidad de reiniciar la app).
+  setTimeout(revisarActualizaciones, 8000);
+  setInterval(revisarActualizaciones, 30 * 60 * 1000); // cada 30 minutos
 });
 
 // Crear un backup al abrir si no existe uno del día de hoy.

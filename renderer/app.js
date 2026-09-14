@@ -79,25 +79,19 @@ function updCerrar() {
 function updMostrar(estado, datos) {
   window.__updEstado = estado;
   const root = $upd();
+  const p = Math.max(0, Math.min(100, Math.round((datos && datos.porciento) || 0)));
+
+  // Durante la descarga no se reconstruye el overlay (eso causaba parpadeo):
+  // solo se actualiza la barra y el porcentaje.
+  if (estado === 'descargando') {
+    const barra = root.querySelector('.upd-barra > div');
+    const pct = root.querySelector('.upd-porciento .upd-pct');
+    if (barra) { barra.style.width = p + '%'; if (pct) pct.textContent = p + '%'; window.__updEstado = 'descargando'; return; }
+  }
+
   let html = '<div class="upd-backdrop"><div class="upd-card">';
 
-  if (estado === 'descargando') {
-    const p = Math.round((datos && datos.porciento) || 0);
-    html += `
-      <div class="upd-hero">
-        <button class="upd-cerrar" onclick="updCerrar()">×</button>
-        <div class="upd-logo">H</div>
-        <h2>Descargando actualización</h2>
-        <p>Se está preparando una nueva versión para ti</p>
-      </div>
-      <div class="upd-body">
-        <div class="upd-progreso">
-          <div class="upd-barra"><div style="width:${p}%"></div></div>
-          <div class="upd-porciento"><span>Descargando…</span><span>${p}%</span></div>
-        </div>
-      </div>
-      <div class="upd-foot"></div>`;
-  } else if (estado === 'disponible') {
+  if (estado === 'disponible') {
     html += `
       <div class="upd-hero">
         <button class="upd-cerrar" onclick="updCerrar()">×</button>
@@ -111,12 +105,23 @@ function updMostrar(estado, datos) {
         </div>
       </div>
       <div class="upd-body">
-        <div class="upd-msg">Descarga e instalación automáticas. Tu información se conserva tal cual y podrás seguir trabajando apenas termine.</div>
-      </div>
-      <div class="upd-foot">
-        <button class="upd-btn secundario" onclick="updCerrar()">Ahora no</button>
-        <button class="upd-btn primario" onclick="updDescargar()">Descargar</button>
+        <div class="upd-msg">La descarga empieza automáticamente. Tu información se conserva tal cual y podrás seguir trabajando apenas termine.</div>
       </div>`;
+  } else if (estado === 'descargando') {
+    html += `
+      <div class="upd-hero">
+        <button class="upd-cerrar" onclick="updCerrar()">×</button>
+        <div class="upd-logo">H</div>
+        <h2>Descargando actualización</h2>
+        <p>Se está preparando una nueva versión para ti</p>
+      </div>
+      <div class="upd-body">
+        <div class="upd-progreso">
+          <div class="upd-barra"><div style="width:${p}%"></div></div>
+          <div class="upd-porciento"><span>Descargando…</span><span class="upd-pct">${p}%</span></div>
+        </div>
+      </div>
+      <div class="upd-foot"></div>`;
   } else if (estado === 'listo') {
     html += `
       <div class="upd-hero">
@@ -153,6 +158,7 @@ function updMostrar(estado, datos) {
 
   html += '</div></div>';
   root.innerHTML = html;
+  if (estado === 'descargando') window.__updEstado = 'descargando';
 }
 
 async function updDescargar() {
