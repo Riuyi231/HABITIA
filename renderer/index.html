@@ -1,0 +1,51 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:;">
+  <title>HABITIA INMUEBLES</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">
+        <div class="logo">H</div>
+        <div>
+          <div class="brand-name">HABITIA</div>
+          <div class="brand-sub" id="brand-sub">Alquileres de estudios</div>
+        </div>
+      </div>
+      <nav id="nav">
+        <button class="nav-item" data-view="dashboard"><span class="ico">▦</span>Resumen</button>
+        <button class="nav-item" data-view="cobros"><span class="ico">💰</span>Cobros del mes</button>
+        <button class="nav-item" data-view="estudios"><span class="ico">🏠</span>Estudios</button>
+        <button class="nav-item" data-view="inquilinos"><span class="ico">👤</span>Inquilinos</button>
+        <button class="nav-item" data-view="contratos"><span class="ico">📄</span>Contratos</button>
+        <button class="nav-item" data-view="gastos"><span class="ico">🧾</span>Gastos</button>
+        <button class="nav-item" data-view="reporte"><span class="ico">📊</span>Reporte</button>
+        <button class="nav-item" data-view="mantenimiento"><span class="ico">🔧</span>Mantenimiento</button>
+        <button class="nav-item" data-view="empresa"><span class="ico">⚙</span>Empresa y datos</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span id="foot-info">—</span>
+      </div>
+    </aside>
+    <main id="main">
+      <header id="topbar">
+        <div id="page-title">Resumen</div>
+        <div>
+          <span id="empresa-nombre" class="empresa-chip">—</span>
+        </div>
+      </header>
+      <section id="content"></section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="app.js"></script>
+  <script src="recibo.js"></script>
+</body>
+</html>

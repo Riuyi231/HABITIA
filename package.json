@@ -1,0 +1,78 @@
+{
+  "name": "habitia",
+  "version": "0.2.0",
+  "description": "HABITIA — Gestión de alquileres de estudios: catálogo de estudios, inquilinos, cobros mensuales, gastos, deudores y acceso móvil web.",
+  "main": "main.js",
+  "author": "Michael Veras <mverasparedes@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "dist": "electron-builder --win nsis --x64",
+    "dist:all": "electron-builder --win nsis --x64 --ia32",
+    "dist:release": "electron-builder --win nsis --x64 --publish always",
+    "dist:portable": "electron-builder --win portable --x64"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2",
+    "exceljs": "^4.4.0",
+    "pdf-lib": "^1.17.1",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.habitia.app",
+    "productName": "HABITIA",
+    "asar": false,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Riuyi231",
+      "repo": "habitia",
+      "releaseType": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "services/**/*",
+      "resources/**/*"
+    ],
+    "win": {
+      "icon": "resources/icono.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "publish": [
+        "github"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HABITIA",
+      "uninstallDisplayName": "HABITIA",
+      "artifactName": "HABITIA-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "HABITIA-portable-${version}.exe"
+    },
+    "electronDownload": {
+      "version": "33.4.11"
+    }
+  }
+}
