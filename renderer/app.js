@@ -1892,6 +1892,19 @@ document.addEventListener('keydown', (e) => {
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Barra lateral colapsable. El estado se recuerda entre sesiones.
+  const sidebar = $('#sidebar');
+  if (sidebar && localStorage.getItem('habitia_sidebar_colapsada') === '1') {
+    sidebar.classList.add('colapsada');
+  }
+  const toggle = $('#sidebar-toggle');
+  if (sidebar && toggle) {
+    toggle.addEventListener('click', () => {
+      const colapsada = sidebar.classList.toggle('colapsada');
+      localStorage.setItem('habitia_sidebar_colapsada', colapsada ? '1' : '0');
+    });
+  }
+
   window.api.onDatosRecargados(() => {
     toast('Datos restaurados');
     loadBasicos().then(() => visualizar());
