@@ -17,15 +17,15 @@
         </div>
       </div>
       <nav id="nav">
-        <button class="nav-item" data-view="dashboard"><span class="ico">▦</span>Resumen</button>
-        <button class="nav-item" data-view="cobros"><span class="ico">💰</span>Cobros del mes</button>
-        <button class="nav-item" data-view="estudios"><span class="ico">🏠</span>Estudios</button>
-        <button class="nav-item" data-view="inquilinos"><span class="ico">👤</span>Inquilinos</button>
-        <button class="nav-item" data-view="contratos"><span class="ico">📄</span>Contratos</button>
-        <button class="nav-item" data-view="gastos"><span class="ico">🧾</span>Gastos</button>
-        <button class="nav-item" data-view="reporte"><span class="ico">📊</span>Reporte</button>
-        <button class="nav-item" data-view="mantenimiento"><span class="ico">🔧</span>Mantenimiento</button>
-        <button class="nav-item" data-view="empresa"><span class="ico">⚙</span>Empresa y datos</button>
+        <button class="nav-item" data-view="dashboard"><span class="ico">▦</span><span class="nav-label">Resumen</span></button>
+        <button class="nav-item" data-view="cobros"><span class="ico">💰</span><span class="nav-label">Cobros del mes</span></button>
+        <button class="nav-item" data-view="estudios"><span class="ico">🏠</span><span class="nav-label">Estudios</span></button>
+        <button class="nav-item" data-view="inquilinos"><span class="ico">👤</span><span class="nav-label">Inquilinos</span></button>
+        <button class="nav-item" data-view="contratos"><span class="ico">📄</span><span class="nav-label">Contratos</span></button>
+        <button class="nav-item" data-view="gastos"><span class="ico">🧾</span><span class="nav-label">Gastos</span></button>
+        <button class="nav-item" data-view="reporte"><span class="ico">📊</span><span class="nav-label">Reporte</span></button>
+        <button class="nav-item" data-view="mantenimiento"><span class="ico">🔧</span><span class="nav-label">Mantenimiento</span></button>
+        <button class="nav-item" data-view="empresa"><span class="ico">⚙</span><span class="nav-label">Empresa y datos</span></button>
       </nav>
       <div class="sidebar-footer">
         <span id="foot-info">—</span>
@@ -33,7 +33,12 @@
     </aside>
     <main id="main">
       <header id="topbar">
-        <div id="page-title">Resumen</div>
+        <div id="topbar-left">
+          <button class="sidebar-toggle" id="sidebar-toggle" title="Mostrar/ocultar menú" aria-label="Mostrar/ocultar menú">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
+          <div id="page-title">Resumen</div>
+        </div>
         <div>
           <span id="empresa-nombre" class="empresa-chip">—</span>
         </div>
@@ -44,6 +49,7 @@
 
   <div id="modal-root"></div>
   <div id="toast-root"></div>
+  <div id="update-root"></div>
 
   <script src="app.js"></script>
   <script src="recibo.js"></script>

@@ -23,22 +23,8 @@ function configurarAutoUpdater() {
 
   autoUpdater.on('update-available', (info) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Actualización disponible',
-        message: 'Hay una nueva versión de HABITIA (' + info.version + ')',
-        detail: '¿Deseas descargarla ahora? La nueva versión se instalará al cerrar la aplicación.',
-        buttons: ['Descargar', 'Ahora no'],
-        defaultId: 0,
-        cancelId: 1
-      }).then(({ response }) => {
-        if (response === 0) {
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', { estado: 'descargando' });
-          autoUpdater.downloadUpdate();
-        } else {
-          saltoEstaVersion = true;
-        }
-      });
+      const vActual = app.getVersion();
+      mainWindow.webContents.send('update:status', { estado: 'disponible', version: info && info.version, versionActual: vActual });
     }
   });
 
@@ -49,19 +35,8 @@ function configurarAutoUpdater() {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', { estado: 'listo', version: info.version });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', { estado: 'listo', version: info && info.version });
     actualizando = true;
-    dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Actualización lista',
-      message: 'La versión ' + info.version + ' se instalará al cerrar HABITIA.',
-      detail: 'Es posible que se cierre la aplicación automáticamente para completar la instalación.',
-      buttons: ['Cerrar y actualizar', 'Más tarde'],
-      defaultId: 0,
-      cancelId: 1
-    }).then(({ response }) => {
-      if (response === 0) setImmediate(() => autoUpdater.quitAndInstall());
-    });
   });
 
   autoUpdater.on('error', (err) => {

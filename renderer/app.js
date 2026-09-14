@@ -64,6 +64,118 @@ function toast(msg, tipo = 'ok') {
   setTimeout(() => el.remove(), 3200);
 }
 
+// ---------- Actualización (overlay estético) ----------
+const $upd = () => $('#update-root');
+
+function updEstadoActual() {
+  return window.__updEstado || null;
+}
+
+function updCerrar() {
+  $upd().innerHTML = '';
+  window.__updEstado = null;
+}
+
+function updMostrar(estado, datos) {
+  window.__updEstado = estado;
+  const root = $upd();
+  let html = '<div class="upd-backdrop"><div class="upd-card">';
+
+  if (estado === 'descargando') {
+    const p = Math.round((datos && datos.porciento) || 0);
+    html += `
+      <div class="upd-hero">
+        <button class="upd-cerrar" onclick="updCerrar()">×</button>
+        <div class="upd-logo">H</div>
+        <h2>Descargando actualización</h2>
+        <p>Se está preparando una nueva versión para ti</p>
+      </div>
+      <div class="upd-body">
+        <div class="upd-progreso">
+          <div class="upd-barra"><div style="width:${p}%"></div></div>
+          <div class="upd-porciento"><span>Descargando…</span><span>${p}%</span></div>
+        </div>
+      </div>
+      <div class="upd-foot"></div>`;
+  } else if (estado === 'disponible') {
+    html += `
+      <div class="upd-hero">
+        <button class="upd-cerrar" onclick="updCerrar()">×</button>
+        <div class="upd-logo">H</div>
+        <h2>¡Nueva versión!</h2>
+        <p>Una versión más reciente de HABITIA está lista</p>
+        <div class="upd-versiones">
+          <span class="upd-ver actual">v${esc((datos && datos.versionActual) || '?')}</span>
+          <span class="upd-flecha">→</span>
+          <span class="upd-ver">v${esc((datos && datos.version) || '?')}</span>
+        </div>
+      </div>
+      <div class="upd-body">
+        <div class="upd-msg">Descarga e instalación automáticas. Tu información se conserva tal cual y podrás seguir trabajando apenas termine.</div>
+      </div>
+      <div class="upd-foot">
+        <button class="upd-btn secundario" onclick="updCerrar()">Ahora no</button>
+        <button class="upd-btn primario" onclick="updDescargar()">Descargar</button>
+      </div>`;
+  } else if (estado === 'listo') {
+    html += `
+      <div class="upd-hero">
+        <button class="upd-cerrar" onclick="updCerrar()">×</button>
+        <div class="upd-logo">H</div>
+        <h2>Actualización lista</h2>
+        <p>La versión ${esc((datos && datos.version) || 'nueva')} está descargada</p>
+      </div>
+      <div class="upd-body">
+        <div class="upd-msg">Reinicia HABITIA para aplicar la nueva versión. Es rápido y se cerrará automáticamente.</div>
+      </div>
+      <div class="upd-foot">
+        <button class="upd-btn secundario" onclick="updCerrar()">Más tarde</button>
+        <button class="upd-btn primario" onclick="updInstalar()">Reiniciar y actualizar</button>
+      </div>`;
+  } else if (estado === 'error') {
+    html += `
+      <div class="upd-hero" style="background:linear-gradient(135deg,#b91c1c,#e11d48)">
+        <button class="upd-cerrar" onclick="updCerrar()">×</button>
+        <div class="upd-logo">H</div>
+        <h2>No se pudo actualizar</h2>
+        <p>Ocurrió un problema al buscar la actualización</p>
+      </div>
+      <div class="upd-body">
+        <div class="upd-chip err"><span>▼</span>${esc((datos && datos.error) || 'Error desconocido')}</div>
+      </div>
+      <div class="upd-foot">
+        <button class="upd-btn secundario" onclick="updCerrar()">Entendido</button>
+      </div>`;
+  } else {
+    root.innerHTML = '';
+    return;
+  }
+
+  html += '</div></div>';
+  root.innerHTML = html;
+}
+
+async function updDescargar() {
+  await window.api.updateDownload();
+  updMostrar('descargando', { porciento: 2 });
+}
+
+async function updInstalar() {
+  await window.api.updateInstall();
+}
+
+function initUpdates() {
+  if (!window.api || !window.api.onUpdateStatus) return;
+  window.api.onUpdateStatus((data) => {
+    const e = data && data.estado;
+    if (e === 'disponible') updMostrar('disponible', data);
+    else if (e === 'descargando') updMostrar('descargando', data);
+    else if (e === 'listo') updMostrar('listo', data);
+    else if (e === 'error') updMostrar('error', data);
+    else if (e === 'revisado') { /* silencioso */ }
+  });
+}
+
 function modal(titulo, bodyHTML, footHTML = '', ancho = 640) {
   const root = $('#modal-root');
   root.innerHTML = `
@@ -1909,5 +2021,6 @@ document.addEventListener('DOMContentLoaded', () => {
     toast('Datos restaurados');
     loadBasicos().then(() => visualizar());
   });
+  initUpdates();
   visualizar();
 });
