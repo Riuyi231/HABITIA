@@ -1,6 +1,6 @@
 {
   "name": "habitia",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "HABITIA — Gestión de alquileres de estudios: catálogo de estudios, inquilinos, cobros mensuales, gastos, deudores y acceso móvil web.",
   "main": "main.js",
   "author": "Michael Veras <mverasparedes@gmail.com>",
