@@ -1,5 +1,5 @@
 ﻿'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -117,6 +117,7 @@ function mutar(fn) {
 }
 
 function createWindow() {
+  Menu.setApplicationMenu(null);
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -124,6 +125,7 @@ function createWindow() {
     minHeight: 640,
     title: 'HABITIA',
     backgroundColor: '#f4f6fb',
+    autoHideMenuBar: true,
     show: !process.argv.includes('--smoke'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
