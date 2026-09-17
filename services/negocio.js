@@ -444,22 +444,22 @@ function marcarPago(db, alquilerId, pagado, fecha, opts) {
     run(db, 'DELETE FROM abonos WHERE alquiler_id=?', [Number(alquilerId)]);
     run(db, "UPDATE alquileres SET pagado=0, fecha_pago='' WHERE id=?", [Number(alquilerId)]);
     run(db, 'UPDATE recibos SET anulado=1 WHERE alquiler_id=? AND anulado=0', [Number(alquilerId)]);
-    logAuditoria(db, 'revertir', 'alquiler', Number(alquilerId), 'Se revirtió el pago y se anuló el recibo');
+    logAuditoria(db, 'revertir', 'alquiler', Number(alquilerId), 'Se revirtió el pago y se anuló la factura');
   }
 }
-// ---------- Recibos numerados ----------
+// ---------- Facturas numeradas (antes "recibos", ahora emitidas como FACTURA) ----------
 function siguienteNumeroRecibo(db, fecha) {
   const f = fecha || hoy();
   const anio = f.slice(0, 4);
   const n = Number(rowToObj(db,
-    `SELECT COUNT(*) AS n FROM recibos WHERE numero LIKE ?`, ['REC-' + anio + '-%']).n || 0);
-  return 'REC-' + anio + '-' + String(n + 1).padStart(5, '0');
+    `SELECT COUNT(*) AS n FROM recibos WHERE numero LIKE ?`, ['F-' + anio + '-%']).n || 0);
+  return 'F-' + anio + '-' + String(n + 1).padStart(5, '0');
 }
 function registrarRecibo(db, d) {
   const fe = d.fecha || hoy();
   const numero = d.numero || siguienteNumeroRecibo(db, fe);
   const n = rowToObj(db, 'SELECT id FROM recibos WHERE numero=?', [numero]);
-  if (n) throw new Error('El recibo ' + numero + ' ya existe');
+  if (n) throw new Error('La factura ' + numero + ' ya existe');
   let moneda = monedaOk(d.moneda);
   if (d.alquiler_id && !d.moneda) {
     const a = rowToObj(db, 'SELECT moneda FROM alquileres WHERE id=?', [d.alquiler_id]);
@@ -512,7 +512,7 @@ function anularRecibo(db, id) {
       }
     }
   }
-  logAuditoria(db, 'anular', 'recibo', Number(id), 'Se anuló el recibo ' + (r.numero || '') + ' y se revirtió el cobro de la cuota');
+  logAuditoria(db, 'anular', 'recibo', Number(id), 'Se anuló la factura ' + (r.numero || '') + ' y se revirtió el cobro de la cuota');
   return getRecibo(db, id);
 }
 function cobradoMes(db, mes) {

@@ -156,11 +156,11 @@ function seedMuestra(db) {
     [aIds['C-1 Estudio Vista'], 5000, diaDe(0, 9), 'Abono parcial', 'efectivo']);
   ids.abonos.push(lastId(db));
 
-  // ---- Recibos (solo de los pagos del mes actual) ----
+  // ---- Facturas de alquiler (solo de los pagos del mes actual) ----
   const recibos = [
-    { alq: 'A-1 Studio Premium', numero: 'REC-' + anio + '-00001', monto: cuota['A-1 Studio Premium'], metodo: 'efectivo' },
-    { alq: 'B-1 Studio Familiar', numero: 'REC-' + anio + '-00002', monto: cuota['B-1 Studio Familiar'], metodo: 'transferencia' },
-    { alq: 'C-2 Estudio Esquina', numero: 'REC-' + anio + '-00003', monto: cuota['C-2 Estudio Esquina'], metodo: 'tarjeta' }
+    { alq: 'A-1 Studio Premium', numero: 'F-' + anio + '-00001', monto: cuota['A-1 Studio Premium'], metodo: 'efectivo' },
+    { alq: 'B-1 Studio Familiar', numero: 'F-' + anio + '-00002', monto: cuota['B-1 Studio Familiar'], metodo: 'transferencia' },
+    { alq: 'C-2 Estudio Esquina', numero: 'F-' + anio + '-00003', monto: cuota['C-2 Estudio Esquina'], metodo: 'tarjeta' }
   ];
   for (const r of recibos) {
     db.run('INSERT INTO recibos (numero,tipo,alquiler_id,monto,fecha,metodo,referencia,moneda) VALUES (?,?,?,?,?,?,?,?)',

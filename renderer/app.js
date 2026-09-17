@@ -1209,14 +1209,14 @@ async function verFichaInquilino(id) {
            <td><span class="badge ${m.estado === 'pagado' ? 'pagada' : m.estado === 'parcial' ? 'parcial' : m.pendiente > 0 ? 'vencida' : 'pendiente'}">${m.estado === 'pagado' ? 'Pagado' : m.estado === 'parcial' ? 'Parcial' : m.pendiente > 0 ? 'Con saldo' : 'Pendiente'}</span></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="vacio" style="max-width:none">Sin movimientos.</div>`}
     ${f.debido > 0 ? `<div class="btn-row" style="margin-top:8px"><button class="btn pequeño" onclick="whatsappDeuda()">Recordatorio WhatsApp</button></div>` : ''}
-    <h4 style="margin:14px 0 6px">Recibos emitidos (${rec.length})</h4>
+    <h4 style="margin:14px 0 6px">Facturas emitidas (${rec.length})</h4>
     ${rec.length
       ? `<div class="tabla-scroll"><table><thead><tr><th>Número</th><th>Fecha</th><th class="num">Monto</th><th>Cuota</th><th>Método</th></tr></thead>
          <tbody>${pgRec.filas.map((m) => `<tr>
            <td><b>${esc(m.numero)}</b></td><td>${esc(m.fecha)}</td><td class="num">${RD$(m.monto)}</td>
            <td>${etiqMes(m.mes_cuota)}</td><td>${m.metodo ? esc(METODO_ETIQ[m.metodo] || m.metodo) : '—'}</td></tr>`).join('')}</tbody></table></div>
          ${paginadorHTML('ficha-recibos', pgRec)}`
-      : `<div class="vacio" style="max-width:none">Sin recibos todavía.</div>`}
+      : `<div class="vacio" style="max-width:none">Sin facturas todavía.</div>`}
     <h4 style="margin:14px 0 6px">Contratos (${con.length})</h4>
     ${con.length
       ? `<table><thead><tr><th>#</th><th>Estudio</th><th>Inicio</th><th>Vence</th><th class="num">Renta</th><th>Estado</th><th></th></tr></thead>
@@ -1274,7 +1274,7 @@ let filtroCobros = 'todos';
 async function viewCobros() {
   vistaActual = 'cobros';
   titulo('Cobros del mes');
-  const rows = (await window.api.cobrosMes(mesActual)).data;
+  const rows = (await window.api.cobrosMes(mesActual)).data || [];
   const cobrado = rows.filter((r) => r.pagado).reduce((s, r) => s + Number(r.monto), 0);
   const pendiente = rows.filter((r) => !r.pagado).reduce((s, r) => s + Number(r.saldo || 0), 0);
   const vencido = rows.filter((r) => r.vencido).reduce((s, r) => s + Number(r.saldo || 0), 0);
@@ -1291,6 +1291,10 @@ async function viewCobros() {
   const pg = paginar('cobros', visibles);
 
   $('#content').innerHTML = `
+    <div class="segment" style="margin-bottom:14px">
+      <button type="button" class="seg activo" onclick="irCobrosTab('cobros')">💵 Cobros</button>
+      <button type="button" class="seg" onclick="irCobrosTab('facturas')">🧾 Facturas</button>
+    </div>
     <div class="btn-row">
       ${selectorMes()}
       <span style="flex:1"></span>
@@ -1310,13 +1314,13 @@ async function viewCobros() {
         <b>Cobrado:</b> <span style="color:var(--verde)">${Object.entries(porMoneda).map(([k, v]) => MN$(v, k)).join(' · ')}</span> ·
         <b>Pendiente:</b> <span style="color:${pendiente ? 'var(--rosado)' : 'var(--verde)'}">${MN$(pendiente, 'RD$')}</span>
         ${vencido > 0 ? ` · <b>Vencido:</b> <span style="color:var(--rosado)">${MN$(vencido, 'RD$')}</span>` : ''}
-        <span class="detalle" style="margin-left:12px;color:var(--texto-suave)">Al registrar un pago se genera el recibo numerado automáticamente. Cada cuenta indica su moneda (RD$ / USD).</span>
+        <span class="detalle" style="margin-left:12px;color:var(--texto-suave)">Al registrar un pago se genera la factura numerada automáticamente, atada a ese cobro. Cada cuenta indica su moneda (RD$ / USD).</span>
       </div>
     </div>
     <div class="card">
       <div class="tabla-scroll">
       <table>
-        <thead><tr><th>Estudio</th><th>Inquilino</th><th class="num">Alquiler</th><th class="num">Abonado</th><th class="num">Saldo</th><th>Vence</th><th>Estado</th><th>Recibo</th><th></th></tr></thead>
+        <thead><tr><th>Estudio</th><th>Inquilino</th><th class="num">Alquiler</th><th class="num">Abonado</th><th class="num">Saldo</th><th>Vence</th><th>Estado</th><th>Factura</th><th></th></tr></thead>
         <tbody>
           ${pg.filas.map((r) => `<tr>
             <td><b>${esc(r.estudio_nombre)}</b><br><span style="color:var(--texto-suave);font-size:12px">${esc(r.estudio_direccion || '')}</span></td>
@@ -1330,7 +1334,7 @@ async function viewCobros() {
             <td>${r.recibo_numero ? `<span class="detalle" style="font-size:11px">${esc(r.recibo_numero)}</span>` : '—'}</td>
             <td style="text-align:right">
               ${r.pagado
-                ? `<button class="btn pequeño secundario" onclick="marcarPendiente(${r.id})">Desmarcar</button> <button class="btn pequeño secundario" onclick="exportarRecibo(${r.id})">Recibo PDF</button>${r.recibo_id ? `<button class="btn pequeño peligro" onclick="anularReciboUI(${r.id})">Anular recibo</button>` : ''}${r.metodo_pago ? `<br><span class="detalle" style="font-size:11px;color:var(--texto-suave)">${METODO_ETIQ[r.metodo_pago] || r.metodo_pago || ''}${r.referencia_pago ? ' · ' + esc(r.referencia_pago) : ''}</span>` : ''}`
+                ? `<button class="btn pequeño secundario" onclick="marcarPendiente(${r.id})">Desmarcar</button> <button class="btn pequeño secundario" onclick="exportarRecibo(${r.id})">Factura PDF</button>${r.recibo_id ? `<button class="btn pequeño peligro" onclick="anularReciboUI(${r.id})">Anular factura</button>` : ''}${r.metodo_pago ? `<br><span class="detalle" style="font-size:11px;color:var(--texto-suave)">${METODO_ETIQ[r.metodo_pago] || r.metodo_pago || ''}${r.referencia_pago ? ' · ' + esc(r.referencia_pago) : ''}</span>` : ''}`
                 : `<button class="btn pequeño secundario" onclick="abonarCobro(${r.id})">Abonar</button> <button class="btn pequeño" onclick="pagarCobro(${r.id})">✓ Cobrar</button>`}
               ${!r.pagado && Number(r.abonado) > 0 ? `<button class="btn pequeño secundario" onclick="verAbonos(${r.id})">Abonos</button>` : ''}
             </td></tr>`).join('')}
@@ -1339,6 +1343,56 @@ async function viewCobros() {
       </div>
       ${paginadorHTML('cobros', pg)}
       ${visibles.length ? '' : `<div class="vacio">Sin cobros que coincidan con el filtro.</div>`}
+    </div>`;
+}
+
+function irCobrosTab(tab) {
+  if (tab === 'facturas') vistaFacturas();
+  else viewCobros();
+}
+function cambiarMesFacturas(delta) {
+  const [y, m] = mesActual.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  mesActual = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  vistaFacturas();
+}
+async function vistaFacturas() {
+  vistaActual = 'cobros';
+  titulo('Cobros del mes · Facturas');
+  const facturas = (await window.api.recibosMes(mesActual)).data || [];
+  const pg = paginar('facturas', facturas);
+  const totalPorMoneda = {};
+  facturas.forEach((f) => { const md = monedaOkUI(f.moneda); totalPorMoneda[md] = round2sum(totalPorMoneda[md], Number(f.monto)); });
+  $('#content').innerHTML = `
+    <div class="segment" style="margin-bottom:14px">
+      <button type="button" class="seg" onclick="irCobrosTab('cobros')">💵 Cobros</button>
+      <button type="button" class="seg activo" onclick="irCobrosTab('facturas')">🧾 Facturas</button>
+    </div>
+    <div class="btn-row">
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn secundario pequeño" onclick="cambiarMesFacturas(-1)">◀</button>
+        <span style="font-weight:700;min-width:150px;text-align:center">${etiqMes(mesActual)}</span>
+        <button class="btn secundario pequeño" onclick="cambiarMesFacturas(1)">▶</button>
+      </div>
+      <span class="detalle" style="align-self:center">${facturas.length} facturas este mes</span>
+    </div>
+    <div class="card">
+      <div class="detalle" style="padding:10px 12px 4px">💡 Cada cobro genera su <b>factura numerada automáticamente</b> y queda atada a ese cobro. Si necesitas el documento otra vez, solo haz clic en <b>Factura PDF</b>.</div>
+      ${facturas.length
+        ? `<div class="tabla-scroll"><table>
+            <thead><tr><th>No. factura</th><th>Fecha</th><th>Estudio</th><th>Inquilino</th><th class="num">Monto</th><th>Método</th><th></th></tr></thead>
+            <tbody>${pg.filas.map((f) => `<tr>
+              <td><b>${esc(f.numero)}</b></td>
+              <td>${esc(f.fecha)}</td>
+              <td>${esc(f.estudio_nombre || '—')}</td>
+              <td>${esc(f.inquilino_nombre || '—')}</td>
+              <td class="num"><b>${MN$(f.monto, f.moneda)}</b></td>
+              <td>${f.metodo ? esc(METODO_ETIQ[f.metodo] || f.metodo) : '—'}</td>
+              <td style="text-align:right">${f.alquiler_id ? `<button class="btn pequeño secundario" onclick="exportarRecibo(${f.alquiler_id}, '${f.mes_cuota || ''}')">Factura PDF</button>` : ''}</td>
+            </tr>`).join('')}</tbody></table></div>
+          ${paginadorHTML('facturas', pg)}
+          <div style="text-align:right;padding:10px 12px;font-weight:700">${Object.entries(totalPorMoneda).map(([k, v]) => `Total ${k}: ${MN$(v, k)}`).join(' · ')}</div>`
+        : `<div class="vacio">No hay facturas emitidas en ${etiqMes(mesActual)} aún. Se generan solas al cobrar una cuota.</div>`}
     </div>`;
 }
 
@@ -1377,8 +1431,8 @@ function pagarCobro(id) {
             </select></div>
           <div class="campo"><label>Referencia (opcional)</label><input id="p-ref" placeholder="Ej. último 4 dígitos / No. de cheque"></div>
         </div>
-        <div class="detalle" style="margin:6px 0 12px;color:var(--texto-suave)">Moneda: <b>${esc(fila.moneda)}</b>. Al confirmar se generará el recibo <b>numerado</b> y quedará guardado en el historial.</div>
-        <button class="btn" type="submit">Confirmar cobro y generar recibo</button>
+        <div class="detalle" style="margin:6px 0 12px;color:var(--texto-suave)">Moneda: <b>${esc(fila.moneda)}</b>. Al confirmar se generará la factura <b>numerada</b> y quedará guardada en el historial.</div>
+        <button class="btn" type="submit">Confirmar cobro y generar factura</button>
       </form>`, '', 560);
   })();
 }
@@ -1398,7 +1452,7 @@ async function guardarPago(e, id) {
   } else {
     const r = await window.api.cobrosMarcar(id, true, $('#p-fecha').value || hoyISO(), $('#p-metodo').value, $('#p-ref').value.trim());
     if (!r.ok) return toast(r.error, 'error');
-    toast('Cobro registrado ✓ Recibo generado');
+    toast('Cobro registrado ✓ Factura generada');
   }
   cerrarModal(); vista('cobros');
 }
@@ -1454,12 +1508,12 @@ async function verAbonos(id) {
     </table>`, `<button class="btn secundario" onclick="cerrarModal()">Cerrar</button>`, 680);
 }
 async function borrarAbono(id) {
-  if (!confirm('¿Eliminar este abono? Si era la última parte del pago, el alquiler volverá a quedar pendiente y el recibo se anulará.')) return;
+  if (!confirm('¿Eliminar este abono? Si era la última parte del pago, el alquiler volverá a quedar pendiente y la factura se anulará.')) return;
   await window.api.abonoDelete(id);
   toast('Abono eliminado'); cerrarModal(); vista('cobros');
 }
 async function marcarPendiente(id) {
-  if (!confirm('¿Marcar este cobro como pendiente? Se borrarán los abonos y el recibo generado quedará anulado.')) return;
+  if (!confirm('¿Marcar este cobro como pendiente? Se borrarán los abonos y la factura generada quedará anulada.')) return;
   const r = await window.api.cobrosMarcar(id, false, '');
   if (!r.ok) return toast(r.error, 'error');
   toast('Marcado como pendiente');
@@ -1470,10 +1524,10 @@ async function anularReciboUI(id) {
   const fila = (await window.api.cobrosMes(mesActual)).data.find((f) => Number(f.id) === Number(id));
   if (!fila) return toast('Cobro no encontrado', 'error');
   const num = fila.recibo_numero ? ' <b>' + esc(fila.recibo_numero) + '</b>' : '';
-  if (!confirm('¿Anular el recibo' + num + ' de ' + (fila.estudio_nombre || 'este alquiler') + '?\n\nEl alquiler volverá a quedar pendiente (se conservan los abonos parciales). Esta acción no se puede deshacer.')) return;
+  if (!confirm('¿Anular la factura' + num + ' de ' + (fila.estudio_nombre || 'este alquiler') + '?\n\nEl alquiler volverá a quedar pendiente (se conservan los abonos parciales). Esta acción no se puede deshacer.')) return;
   const r = await window.api.recibosAnular(fila.recibo_id);
-  if (!r.ok) return toast(r.error || 'No se pudo anular el recibo', 'error');
-  toast('Recibo anulado');
+  if (!r.ok) return toast(r.error || 'No se pudo anular la factura', 'error');
+  toast('Factura anulada');
   vista('cobros');
 }
 
@@ -1644,7 +1698,7 @@ async function viewEmpresa() {
       <div class="card">
         <h3>Preferencias</h3>
         <form onsubmit="guardarPreferencias(event)">
-          <div class="campo"><label>Encargado (quien cobra: aparece como "registrado por" en recibos y notas)</label><input id="pref-encargado" value="${esc(window.__usuarioActual || 'Dueño')}"></div>
+          <div class="campo"><label>Encargado (quien cobra: aparece como "registrado por" en facturas y notas)</label><input id="pref-encargado" value="${esc(window.__usuarioActual || 'Dueño')}"></div>
           <div class="campo"><label>Día de pago predeterminado</label>
             <select id="pref-diapago" style="border:1px solid var(--borde);border-radius:8px;padding:8px 10px;background:var(--fondo)">
               ${Array.from({ length: 28 }, (_, i) => i + 1).map((d) => `<option value="${d}" ${Number(window.__diaPago || 5) === d ? 'selected' : ''}>${d}</option>`).join('')}
@@ -2023,7 +2077,7 @@ async function viewReporte() {
     <div class="grid grid-4" style="margin-bottom:16px">
       <div class="card kpi positivo"><div class="label">Recaudado</div>
         <div class="valor">${RD$(k.cobrado)}</div>
-        <div class="sub">${k.recibos || 0} recibos emitidos</div></div>
+        <div class="sub">${k.recibos || 0} facturas emitidas</div></div>
       <div class="card kpi ${Number(k.porCobrar) > 0 ? 'negativo' : ''}"><div class="label">Por cobrar</div>
         <div class="valor">${RD$(k.porCobrar)}</div>
         <div class="sub">${Number(k.porCobrar) > 0 ? 'pendiente del mes' : 'al día 🎉'}</div></div>
@@ -2057,10 +2111,10 @@ async function viewReporte() {
     </div>
 
     <div class="card" style="margin-bottom:16px">
-      <h3>Recibos del mes (${k.recibos || 0})</h3>
+      <h3>Facturas del mes (${k.recibos || 0})</h3>
       ${f.recibos && f.recibos.length
         ? `<div class="tabla-scroll"><table>
-            <thead><tr><th>Recibo</th><th>Fecha</th><th>Inquilino</th><th>Estudio</th><th>Método</th><th class="num">Monto</th><th></th></tr></thead>
+            <thead><tr><th>Factura</th><th>Fecha</th><th>Inquilino</th><th>Estudio</th><th>Método</th><th class="num">Monto</th><th></th></tr></thead>
             <tbody>${pgRec.filas.map((r) => `<tr>
               <td><b>${esc(r.numero)}</b></td>
               <td>${esc(r.fecha || '—')}</td>
@@ -2069,11 +2123,11 @@ async function viewReporte() {
               <td>${r.metodo ? esc(METODO_ETIQ[r.metodo] || r.metodo) : '—'}</td>
               <td class="num">${RD$(r.monto)}</td>
               <td style="text-align:right">
-                ${r.alquiler_id ? `<button class="btn pequeño secundario" onclick="exportarRecibo(${r.alquiler_id})">Reimprimir</button> <button class="btn pequeño peligro" onclick="anularReciboUI(${r.alquiler_id})">Anular</button>` : ''}
+                ${r.alquiler_id ? `<button class="btn pequeño secundario" onclick="exportarRecibo(${r.alquiler_id})">Imprimir</button> <button class="btn pequeño peligro" onclick="anularReciboUI(${r.alquiler_id})">Anular</button>` : ''}
               </td></tr>`).join('')}</tbody>
           </table></div>
           ${paginadorHTML('reporte-recibos', pgRec)}`
-        : `<div class="vacio">No hay recibos emitidos en ${etiqMes(mesActual)}.</div>`}
+        : `<div class="vacio">No hay facturas emitidas en ${etiqMes(mesActual)}.</div>`}
     </div>
 
     <div class="card">
@@ -2121,7 +2175,7 @@ function cuerpoReporteAnual(a, anioSel) {
           <div class="sub">cuota total − recaudado</div></div>
       </div>
       <div class="detalle" style="margin-bottom:10px">
-        <b>Cuota generada:</b> ${RD$(at.cuota)} · <b>Recibos:</b> ${at.recibos || 0} (${RD$(at.montoRecibos)}) · <b>Ocupación promedio:</b> ${at.ocupacionPromedio || 0}%
+        <b>Cuota generada:</b> ${RD$(at.cuota)} · <b>Facturas:</b> ${at.recibos || 0} (${RD$(at.montoRecibos)}) · <b>Ocupación promedio:</b> ${at.ocupacionPromedio || 0}%
       </div>
       <table>
         <thead><tr><th>Mes</th><th class="num">Cuota</th><th class="num">Cobrado</th><th class="num">Gastos</th><th class="num">Neto</th></tr></thead>
@@ -2532,7 +2586,7 @@ async function viewFlujo() {
           <div class="detalle" style="margin-bottom:8px"><b>${MN$(c.cobros_esperados, md, 0)}</b> por cobrar: <b style="color:var(--rosado)">${MN$(c.porcobrar_vencido, md, 0)} vencidas</b> · <b>${MN$(c.porcobrar_proximo, md, 0)} próximas</b></div>
           <table>
             <tbody>
-              <tr><td>✅ Cobrado hasta hoy (recibos)</td><td class="num">+ ${MN$(c.cobrado, md, 0)}</td></tr>
+              <tr><td>✅ Cobrado hasta hoy (facturas)</td><td class="num">+ ${MN$(c.cobrado, md, 0)}</td></tr>
               <tr><td>🧩 Abonos (pagos parciales)</td><td class="num">+ ${MN$(c.abonado, md, 0)}</td></tr>
               <tr><td>💸 Gastos pagados hasta hoy</td><td class="num">− ${MN$(c.gastado, md, 0)}</td></tr>
               <tr><td style="border-top:1px solid var(--borde-suave)"><b>Caja acumulada</b></td><td class="num" style="border-top:1px solid var(--borde-suave)"><b>${MN$(c.disponible, md, 0)}</b></td></tr>
@@ -2598,7 +2652,7 @@ async function leerTodasAlertas() {
 
 function abrirBuscador() {
   modal('Buscar en HABITIA', `
-    <input id="buscador-input" class="buscar" placeholder="Estudio, inquilino, recibo, contrato, deuda…" autocomplete="off" style="width:100%;margin-bottom:10px" oninput="buscarGlobalUI(this.value)">
+    <input id="buscador-input" class="buscar" placeholder="Estudio, inquilino, factura, contrato, deuda…" autocomplete="off" style="width:100%;margin-bottom:10px" oninput="buscarGlobalUI(this.value)">
     <div id="buscador-resultados"></div>`, `
       <span class="detalle">Usa Ctrl+K para abrir y el botón × para cerrar</span>
       <span style="flex:1"></span>
@@ -2617,7 +2671,7 @@ async function buscarGlobalUI(q) {
     grupo('Estudios', res.estudios || [], (e) => `<div class="busc-item" onclick="irBuscador('estudios')">🏠 <b>${esc(e.nombre)}</b> <span class="detalle">${esc(e.direccion || '')} ${e.inquilino_nombre ? '· ' + esc(e.inquilino_nombre) : ''}</span></div>`) +
     grupo('Inquilinos', res.inquilinos || [], (i) => `<div class="busc-item" onclick="verFichaInquilino(${i.id});cerrarModal()">👤 <b>${esc(i.nombre)}</b> <span class="detalle">${esc(i.estudio_nombre || '')}${i.whatsapp ? ' · 📱' + esc(i.whatsapp) : ''}</span></div>`) +
     grupo('Deudas', res.deudas || [], (d) => `<div class="busc-item" onclick="cerrarModal();irACobrar('${d.mes}')">💸 <b>${esc(d.inquilino_nombre || '')}</b> ${esc(d.estudio_nombre || '')} · <b style="color:var(--rosado)">${RD$(Number(d.monto) - Number(d.abonado || 0))}</b> <span class="detalle">${etiqMes(d.mes)}</span></div>`) +
-    grupo('Recibos', res.recibos || [], (r) => `<div class="busc-item" onclick="cerrarModal();irBuscadorRecibo(${r.id})">🧾 <b>${esc(r.numero)}</b> ${RD$(r.monto)} <span class="detalle">${esc(r.inquilino_nombre || '')} · ${esc(r.fecha)}</span></div>`) +
+    grupo('Facturas', res.recibos || [], (r) => `<div class="busc-item" onclick="cerrarModal();irBuscadorRecibo(${r.id})">🧾 <b>${esc(r.numero)}</b> ${RD$(r.monto)} <span class="detalle">${esc(r.inquilino_nombre || '')} · ${esc(r.fecha)}</span></div>`) +
     grupo('Contratos', res.contratos || [], (c) => `<div class="busc-item" onclick="cerrarModal();vista('contratos')">📄 <b>#${c.id}</b> ${esc(c.estudio_nombre || '')} — ${esc(c.inquilino_nombre || '')} <span class="detalle">${c.estado}</span></div>`) +
     grupo('Mantenimiento', res.mantenimientos || [], (o) => `<div class="busc-item" onclick="cerrarModal();vista('mantenimiento')">🔧 <b>#${o.id}</b> ${esc(o.detalle || '')} <span class="detalle">${esc(o.estudio_nombre || '')}</span></div>`);
   if (!res.estudios.length && !res.inquilinos.length && !res.deudas.length && !res.recibos.length && !res.contratos.length && !res.mantenimientos.length) {
@@ -2628,7 +2682,7 @@ function irBuscador(vistaNombre) { cerrarModal(); vista(vistaNombre); }
 function irACobrar(mes) { mesActual = mes; vista('cobros'); }
 async function irBuscadorRecibo(id) {
   cerrarModal();
-  toast('Recibo cargado en Cobros del mes');
+  toast('Factura cargada en Cobros del mes');
   vista('cobros');
 }
 

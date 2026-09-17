@@ -324,7 +324,7 @@ async function reporteFinanciero(empresa, f, mes) {
   const filasKpi = [
     ['Estudios', String(k.estudios || 0)],
     ['Estudios ocupados', String(k.ocupados || 0)],
-    ['Recibos emitidos', String(k.recibos || 0)],
+    ['Facturas emitidas', String(k.recibos || 0)],
     ['Recaudado', { texto: RD(k.cobrado), color: AZUL }],
     ['Por cobrar este mes', { texto: RD(k.porCobrar), color: k.porCobrar > 0 ? AMBAR : AZUL }],
     ['Atrasado de otros meses', { texto: RD(k.totalAtrasado), color: k.totalAtrasado > 0 ? ROJO : AZUL }],
@@ -335,19 +335,19 @@ async function reporteFinanciero(empresa, f, mes) {
     anchos: [ctx.W * 0.62, ctx.W * 0.38], numeric: [false, true]
   });
 
-  ctx.sub('Recibos del mes');
+  ctx.sub('Facturas del mes');
   const filasRec = f.recibos.map((r) => ([
     r.numero, r.fecha || '',
     r.inquilino_nombre || '—', r.estudio_nombre || '—',
     String(r.metodo || '—'), RD(r.monto)
   ]));
   if (filasRec.length) {
-    dibujarTabla(ctx, ['Recibo', 'Fecha', 'Inquilino', 'Estudio', 'Método', 'Monto'], filasRec, {
+    dibujarTabla(ctx, ['Factura', 'Fecha', 'Inquilino', 'Estudio', 'Método', 'Monto'], filasRec, {
       anchos: [ctx.W * 0.14, ctx.W * 0.1, ctx.W * 0.22, ctx.W * 0.22, ctx.W * 0.15, ctx.W * 0.17],
       numeric: [false, false, false, false, false, true]
     });
   } else {
-    ctx.page.drawText('No hubo recibos en ' + ETIQUETA_MES(mes) + '.', { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: GRIS_TXT });
+    ctx.page.drawText('No hubo facturas en ' + ETIQUETA_MES(mes) + '.', { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: GRIS_TXT });
     ctx.y -= 18;
   }
 
@@ -389,7 +389,7 @@ async function reporteAnual(empresa, f, anio) {
     ['Recaudado en el año', { texto: RD(t.cobrado), color: AZUL }],
     ['Gastos del año', RD(t.gastos)],
     ['Por cobrar anual', { texto: RD(t.porCobrarAnual), color: Number(t.porCobrarAnual) > 0 ? AMBAR : AZUL }],
-    ['Recibos emitidos', String(t.recibos || 0)],
+    ['Facturas emitidas', String(t.recibos || 0)],
     ['Ocupación promedio', (t.ocupacionPromedio || 0) + '%'],
     { celdas: ['GANANCIA NETA del año', { texto: RD(t.neto), color: AZUL_OSCURO, bold: true }], fillcolor: AZUL_PALIDO }
   ];
@@ -434,16 +434,17 @@ async function reporteAnual(empresa, f, anio) {
 }
 
 async function reporteRecibo(empresa, cobro, estudio, inquilino) {
-  const ctx = await crearContexto(empresa, 'Recibo de pago');
-  ctx.titulo('Recibo de Pago de Alquiler', 'No. ' + String(cobro.recibo_numero || cobro.id || '—'));
+  const ctx = await crearContexto(empresa, 'Factura');
+  ctx.titulo('FACTURA DE ALQUILER', 'No. ' + String(cobro.recibo_numero || cobro.id || '—'));
 
   const renglones = [
     ['Mes que cubre', ETIQUETA_MES(cobro.mes)],
-    ['Fecha de pago', String(cobro.fecha_pago || cobro.fecha || '—')],
+    ['Fecha de emisión', String(cobro.fecha_pago || cobro.fecha || '—')],
     ['Estudio', estudio && estudio.nombre ? String(estudio.nombre) : (cobro.estudio_nombre || '—')],
     ['Dirección', (estudio && estudio.direccion) || (cobro.estudio_direccion || '—')],
     ['Inquilino', (inquilino && inquilino.nombre) ? String(inquilino.nombre) : (cobro.inquilino_nombre || '—')],
-    ['Alquiler mensual', MN(cobro.monto, cobro.moneda)],
+    ['Concepto', 'Alquiler del mes de ' + ETIQUETA_MES(cobro.mes)],
+    ['Monto de la factura', MN(cobro.monto, cobro.moneda)],
     ['Método de pago', cobro.metodo_pago ? String(cobro.metodo_pago) : String(cobro.metodo || '—')],
     ['Referencia', String(cobro.referencia_pago || cobro.referencia || '—')]
   ];
@@ -465,7 +466,7 @@ async function reporteRecibo(empresa, cobro, estudio, inquilino) {
   const boxH = 36;
   ctx.page.drawRectangle({ x: ctx.M, y: ctx.y - boxH, width: boxW, height: boxH, color: AZUL_PALIDO });
   ctx.page.drawRectangle({ x: ctx.M, y: ctx.y - boxH, width: boxW, height: boxH, borderColor: AZUL_MARCA, borderWidth: 1.2 });
-  const etiqTotal = pagadoCompleto ? 'TOTAL PAGADO' : 'ABONO RECIBIDO';
+  const etiqTotal = pagadoCompleto ? 'TOTAL DE LA FACTURA' : 'ABONO A CUENTA';
   const badge = pagadoCompleto ? '' : '  ·  SALDO PENDIENTE ' + MN(Math.max(0, Number(cobro.monto) - abonado), cobro.moneda);
   ctx.page.drawText(etiqTotal, { x: ctx.M + 12, y: ctx.y - boxH / 2 - 5, size: 9, font: ctx.bold, color: AZUL_OSCURO });
   ctx.page.drawText(String(badge).toUpperCase(), { x: ctx.M + 12, y: ctx.y - boxH / 2 + 9, size: 7.5, font: ctx.bold, color: ROJO });
@@ -473,7 +474,7 @@ async function reporteRecibo(empresa, cobro, estudio, inquilino) {
   ctx.page.drawText(txtTotal, { x: ctx.M + boxW - 12 - ctx.bold.widthOfTextAtSize(txtTotal, 15), y: ctx.y - boxH / 2 - 9, size: 15, font: ctx.bold, color: AZUL_OSCURO });
   ctx.y -= boxH + 14;
 
-  ctx.page.drawText((pagadoCompleto ? 'Recibí del inquilino la suma de:' : 'Recibí del inquilino la suma de') + (pagadoCompleto ? '' : ' (abono a la renta):'), { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: TINTA });
+  ctx.page.drawText('Factura por concepto de alquiler, suma de:', { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: TINTA });
   ctx.y -= 14;
   const unidadMoneda = (cobro.moneda === 'USD') ? 'dólares americanos con 00/100' : 'pesos dominicanos con 00/100';
   ctx.page.drawText(MN(montoPagado, cobro.moneda) + '  (' + letraMonto(Number(montoPagado)) + ' ' + unidadMoneda + ')', { x: ctx.M, y: ctx.y, size: 9, font: ctx.bold, color: TINTA });

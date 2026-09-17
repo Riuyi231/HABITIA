@@ -191,12 +191,12 @@ function datosDe(tipo, { negocio, db, mes, anio, empresa }) {
             nombre: 'Resumen',
             headers: ['Concepto', 'Monto'],
             filas: [
-              ['Estudios', k.estudios || 0], ['Ocupados', k.ocupados || 0], ['Recibos emitidos', k.recibos || 0],
+              ['Estudios', k.estudios || 0], ['Ocupados', k.ocupados || 0], ['Facturas emitidas', k.recibos || 0],
               ['Recaudado', num(k.cobrado)], ['Por cobrar', num(k.porCobrar)], ['Atrasado de otros meses', num(k.totalAtrasado)],
               ['Gastos', num(k.gastos)], ['Ganancia neta', num(k.neto)]
             ]
           },
-          { nombre: 'Recibos', headers: ['Recibo', 'Fecha', 'Inquilino', 'Estudio', 'Método', 'Moneda', 'Monto'], filas: filasRec },
+          { nombre: 'Facturas', headers: ['Factura', 'Fecha', 'Inquilino', 'Estudio', 'Método', 'Moneda', 'Monto'], filas: filasRec },
           {
             nombre: 'Gastos por categoría',
             headers: ['Categoría', 'Monto'],
@@ -226,7 +226,7 @@ function datosDe(tipo, { negocio, db, mes, anio, empresa }) {
             headers: ['Concepto', 'Monto'],
             filas: [
               ['Cuota generada', num(t.cuota)], ['Recaudado', num(t.cobrado)], ['Gastos', num(t.gastos)],
-              ['Por cobrar anual', num(t.porCobrarAnual)], ['Recibos', t.recibos || 0], ['Ganancia neta', num(t.neto)]
+              ['Por cobrar anual', num(t.porCobrarAnual)], ['Facturas', t.recibos || 0], ['Ganancia neta', num(t.neto)]
             ]
           },
           {

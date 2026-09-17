@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('api', {
   centroPendientes: () => ipcRenderer.invoke('pendientes:centro'),
 
   recibosAnular: (id) => ipcRenderer.invoke('recibos:anular', { id }),
+  recibosMes: (mes) => ipcRenderer.invoke('recibos:mes', { mes }),
 
   contratosList: (filtros) => ipcRenderer.invoke('contratos:list', filtros),
   contratosGet: (id) => ipcRenderer.invoke('contratos:get', { id }),

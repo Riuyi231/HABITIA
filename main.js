@@ -571,6 +571,7 @@ ipcMain.handle('pendientes:centro', wrap(() => negocio.centroPendientes(db)));
 
 // ---------- IPC: recibos numerados ----------
 ipcMain.handle('recibos:anular', mutar((d) => negocio.anularRecibo(db, d.id)));
+ipcMain.handle('recibos:mes', wrap((d) => negocio.listarRecibos(db, (d && d.mes) || undefined).filter((r) => Number(r.anulado) !== 1)));
 
 // ---------- IPC: contratos ----------
 ipcMain.handle('contratos:list', wrap((d) => negocio.listarContratos(db, d || {})));
