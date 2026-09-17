@@ -1,6 +1,7 @@
 'use strict';
 // HABITIA — lógica de negocio de alquileres de estudios.
 // Estudios, inquilinos, cobros mensuales, gastos y resumen.
+const crypto = require('crypto');
 
 function rowToObj(db, sql, params) {
   const stmt = db.prepare(sql);
@@ -25,6 +26,81 @@ function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 function hoy() { return new Date().toISOString().slice(0, 10); }
 function mesHoy() { return hoy().slice(0, 7); }
 
+// ---------- Fase 3 §5: Auditoría ----------
+function logAuditoria(db, accion, entidad, entidadId, detalle, usuario) {
+  try {
+    run(db, `INSERT INTO actividad_log (accion, entidad, entidad_id, detalle, usuario)
+             VALUES (?,?,?,?,?)`,
+      [String(accion), String(entidad),
+       entidadId ? Number(entidadId) : null,
+       String(detalle || '').slice(0, 500),
+       String(usuario || 'Dueño').slice(0, 80)]);
+  } catch (e) { /* la auditoría nunca debe romper la operación */ }
+}
+function listAuditoria(db, opts) {
+  const o = opts || {};
+  const where = [];
+  const params = [];
+  if (o.accion) { where.push('accion = ?'); params.push(o.accion); }
+  if (o.entidad) { where.push('entidad = ?'); params.push(o.entidad); }
+  if (o.q) { where.push('(detalle LIKE ? OR entidad LIKE ? OR accion LIKE ?)'); params.push('%' + o.q + '%', '%' + o.q + '%', '%' + o.q + '%'); }
+  if (o.desde) { where.push('date(fecha) >= ?'); params.push(o.desde); }
+  if (o.hasta) { where.push('date(fecha) <= ?'); params.push(o.hasta); }
+  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  return allToObj(db, `SELECT * FROM actividad_log ${w} ORDER BY id DESC LIMIT 1000`, params);
+}
+function resumenAuditoria(db) {
+  const n = rowToObj(db, 'SELECT COUNT(*) AS n FROM actividad_log').n || 0;
+  const hoy = new Date().toISOString().slice(0, 10);
+  const hoyN = rowToObj(db, 'SELECT COUNT(*) AS n FROM actividad_log WHERE date(fecha)=?', [hoy]).n || 0;
+  const acciones = allToObj(db,
+    `SELECT accion, COUNT(*) AS n FROM actividad_log GROUP BY accion ORDER BY n DESC LIMIT 12`)
+    .map((r) => ({ accion: r.accion, n: r.n }));
+  return { total: n, hoy: hoyN, acciones };
+}
+function actividadReciente(db, limite) {
+  return allToObj(db, `SELECT * FROM actividad_log ORDER BY id DESC LIMIT ?`, [Number(limite) || 10]);
+}
+
+// ---------- Fase 3 §13: Registro de archivados ----------
+function archivados(db) {
+  const estudio = allToObj(db,
+    `SELECT e.id, e.nombre, e.direccion, e.edificio FROM estudios e WHERE e.activo=0 ORDER BY e.nombre`);
+  const inquilino = allToObj(db,
+    `SELECT i.id, i.nombre, i.telefono FROM inquilinos i WHERE i.activo=0 ORDER BY i.nombre`);
+  const proveedor = allToObj(db,
+    `SELECT p.id, p.nombre FROM proveedores p WHERE p.activo=0 ORDER BY p.nombre`);
+  return { estudio, inquilino, proveedor };
+}
+
+// ---------- Fase 3 §6: Seguridad (PIN) ----------
+function generarSalt() { return crypto.randomBytes(16).toString('hex'); }
+function hashPin(pin, salt) { return crypto.pbkdf2Sync(String(pin), salt, 10000, 64, 'sha256').toString('hex'); }
+function setPin(db, pin) {
+  const salt = generarSalt();
+  const hash = hashPin(pin, salt);
+  run(db, "INSERT OR REPLACE INTO config (clave, valor) VALUES ('pin_hash', ?)", [hash]);
+  run(db, "INSERT OR REPLACE INTO config (clave, valor) VALUES ('pin_salt', ?)", [salt]);
+  logAuditoria(db, 'config', 'seguridad', null, 'PIN configurado / modificado');
+  return true;
+}
+function verificarPin(db, pin) {
+  const h = rowToObj(db, "SELECT valor FROM config WHERE clave='pin_hash'");
+  const s = rowToObj(db, "SELECT valor FROM config WHERE clave='pin_salt'");
+  if (!h || !s || !h.valor || !s.valor) return false;
+  return hashPin(pin, s.valor) === h.valor;
+}
+function pinActivo(db) {
+  const h = rowToObj(db, "SELECT valor FROM config WHERE clave='pin_hash'");
+  return Boolean(h && h.valor);
+}
+function clearPin(db) {
+  run(db, "DELETE FROM config WHERE clave='pin_hash'");
+  run(db, "DELETE FROM config WHERE clave='pin_salt'");
+  logAuditoria(db, 'config', 'seguridad', null, 'PIN eliminado');
+  return true;
+}
+
 function nombreCorto(s) {
   return String(s || '').trim();
 }
@@ -34,6 +110,7 @@ function getEmpresa(db) {
   return rowToObj(db, 'SELECT * FROM empresa WHERE id=1') || { id: 1, nombre: '', rnc: '', telefono: '', email: '', direccion: '' };
 }
 function saveEmpresa(db, data) {
+  if (!String(data.nombre || '').trim()) throw new Error('El nombre del edificio/empresa es obligatorio');
   run(db,
     `INSERT INTO empresa (id,nombre,rnc,telefono,email,direccion)
      VALUES (1,?,?,?,?,?)
@@ -127,14 +204,19 @@ const p = {
     run(db,
       `UPDATE estudios SET nombre=?,direccion=?,edificio=?,alquiler=?,deposito=?,gastos_fijos=?,costo_inversion=?,estado=? WHERE id=?`,
       [p.nombre, p.direccion, p.edificio, p.alquiler, p.deposito, p.gastosFijos, p.costoInversion, estado, Number(e.id)]);
+    logAuditoria(db, 'editar', 'propiedad', e.id, 'Se modificó la propiedad ' + p.nombre);
     return Number(e.id);
   }
   run(db, `INSERT INTO estudios (nombre,direccion,edificio,alquiler,deposito,gastos_fijos,costo_inversion,estado) VALUES (?,?,?,?,?,?,?,?)`,
     [p.nombre, p.direccion, p.edificio, p.alquiler, p.deposito, p.gastosFijos, p.costoInversion, estado]);
-  return Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
+  const id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
+  logAuditoria(db, 'crear', 'propiedad', id, 'Se creó la propiedad ' + p.nombre);
+  return id;
 }
 function deleteEstudio(db, id) {
+  const e = getEstudio(db, id);
   run(db, 'UPDATE estudios SET activo=0, inquilino_id=NULL WHERE id=?', [Number(id)]);
+  logAuditoria(db, 'archivar', 'propiedad', Number(id), 'Se archivó la propiedad ' + (e && e.nombre ? e.nombre : ''));
 }
 
 // Lista de edificios con subtotales (estudios, ocupación, cuota potencial y
@@ -222,6 +304,7 @@ function saveInquilino(db, iq) {
       [p.nombre, p.telefono, p.whatsapp, p.email, p.notas]);
     id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
   }
+  logAuditoria(db, iq.id ? 'editar' : 'crear', 'inquilino', id, (iq.id ? 'Se modificó el inquilino ' : 'Se creó el inquilino ') + p.nombre);
   // (Des)ocupar estudio con registro de ocupaciones
   const estudioAsignar = iq.estudio_id ? Number(iq.estudio_id) : null;
   const prev = rowToObj(db, 'SELECT id FROM estudios WHERE inquilino_id=? AND activo=1', [id]);
@@ -240,6 +323,8 @@ function deleteInquilino(db, id) {
   if (prev) liberarEstudio(db, prev.id);
   run(db, 'UPDATE estudios SET inquilino_id=NULL, estado=? WHERE inquilino_id=?', ['disponible', Number(id)]);
   run(db, 'UPDATE inquilinos SET activo=0 WHERE id=?', [Number(id)]);
+  const iq = rowToObj(db, 'SELECT nombre FROM inquilinos WHERE id=?', [Number(id)]);
+  logAuditoria(db, 'archivar', 'inquilino', Number(id), 'Se archivó el inquilino ' + (iq && iq.nombre ? iq.nombre : ''));
 }
 
 // ---------- Ocupaciones (historial de quién vivió en cada estudio) ----------
@@ -337,16 +422,18 @@ function marcarPago(db, alquilerId, pagado, fecha, opts) {
     const abonado = round2(rowToObj(db, 'SELECT COALESCE(SUM(monto),0) AS s FROM abonos WHERE alquiler_id=?', [Number(alquilerId)]).s || 0);
     const faltante = round2(Number(a.monto) - abonado);
     if (faltante > 0) {
-      run(db, 'INSERT INTO abonos (alquiler_id,monto,fecha,notas,metodo_pago,referencia) VALUES (?,?,?,?,?,?)',
-        [Number(alquilerId), faltante, f, 'Pago completo', String(o.metodo || ''), String(o.referencia || '')]);
+      run(db, 'INSERT INTO abonos (alquiler_id,monto,fecha,notas,metodo_pago,referencia,moneda) VALUES (?,?,?,?,?,?,?)',
+        [Number(alquilerId), faltante, f, 'Pago completo', String(o.metodo || ''), String(o.referencia || ''), monedaOk(a.moneda)]);
     }
     run(db, 'UPDATE alquileres SET pagado=1, fecha_pago=?, metodo_pago=?, referencia_pago=?, registrado_por=? WHERE id=?',
       [f, String(o.metodo || ''), String(o.referencia || ''), String(o.registrado_por || ''), Number(alquilerId)]);
     registrarRecibo(db, { alquiler_id: Number(alquilerId), monto: round2(Number(a.monto)), fecha: f, metodo: String(o.metodo || ''), referencia: String(o.referencia || '') });
+    logAuditoria(db, 'pago', 'alquiler', Number(alquilerId), 'Pago de ' + String(a.moneda) + ' ' + round2(Number(a.monto)).toFixed(2) + ' registrado (' + String(o.metodo || 'Efectivo') + ')', o.registrado_por);
   } else {
     run(db, 'DELETE FROM abonos WHERE alquiler_id=?', [Number(alquilerId)]);
     run(db, "UPDATE alquileres SET pagado=0, fecha_pago='' WHERE id=?", [Number(alquilerId)]);
     run(db, 'UPDATE recibos SET anulado=1 WHERE alquiler_id=? AND anulado=0', [Number(alquilerId)]);
+    logAuditoria(db, 'revertir', 'alquiler', Number(alquilerId), 'Se revirtió el pago y se anuló el recibo');
   }
 }
 // ---------- Recibos numerados ----------
@@ -362,9 +449,14 @@ function registrarRecibo(db, d) {
   const numero = d.numero || siguienteNumeroRecibo(db, fe);
   const n = rowToObj(db, 'SELECT id FROM recibos WHERE numero=?', [numero]);
   if (n) throw new Error('El recibo ' + numero + ' ya existe');
-  run(db, `INSERT INTO recibos (numero,tipo,alquiler_id,monto,fecha,metodo,referencia) VALUES (?,?,?,?,?,?,?)`,
+  let moneda = monedaOk(d.moneda);
+  if (d.alquiler_id && !d.moneda) {
+    const a = rowToObj(db, 'SELECT moneda FROM alquileres WHERE id=?', [d.alquiler_id]);
+    if (a && a.moneda) moneda = monedaOk(a.moneda);
+  }
+  run(db, `INSERT INTO recibos (numero,tipo,alquiler_id,monto,fecha,metodo,referencia,moneda) VALUES (?,?,?,?,?,?,?,?)`,
     [numero, String(d.tipo || 'cobro'), d.alquiler_id || null, round2(d.monto || 0), fe,
-     String(d.metodo || ''), String(d.referencia || '')]);
+     String(d.metodo || ''), String(d.referencia || ''), moneda]);
   const id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
   return getRecibo(db, id);
 }
@@ -409,6 +501,7 @@ function anularRecibo(db, id) {
       }
     }
   }
+  logAuditoria(db, 'anular', 'recibo', Number(id), 'Se anuló el recibo ' + (r.numero || '') + ' y se revirtió el cobro de la cuota');
   return getRecibo(db, id);
 }
 function cobradoMes(db, mes) {
@@ -441,12 +534,14 @@ function abonoAgregar(db, alquilerId, monto, fecha, notas, opts) {
   if (faltante <= 0) throw new Error('Este alquiler ya está pagado');
   const montoReal = Math.min(m, faltante);
   const f = fecha || hoy();
-  run(db, 'INSERT INTO abonos (alquiler_id,monto,fecha,notas,metodo_pago,referencia) VALUES (?,?,?,?,?,?)',
-    [Number(alquilerId), montoReal, f, String(notas || ''), String(o.metodo || ''), String(o.referencia || '')]);
+  run(db, 'INSERT INTO abonos (alquiler_id,monto,fecha,notas,metodo_pago,referencia,moneda) VALUES (?,?,?,?,?,?,?)',
+    [Number(alquilerId), montoReal, f, String(notas || ''), String(o.metodo || ''), String(o.referencia || ''), monedaOk(a.moneda)]);
+  logAuditoria(db, 'abono', 'alquiler', Number(alquilerId), 'Abono parcial de ' + String(a.moneda) + ' ' + montoReal.toFixed(2) + ' aplicado a la cuenta');
   if (round2(abonado + montoReal) >= Number(a.monto)) {
     run(db, 'UPDATE alquileres SET pagado=1, fecha_pago=?, metodo_pago=?, referencia_pago=?, registrado_por=? WHERE id=?',
       [f, String(o.metodo || ''), String(o.referencia || ''), String(o.registrado_por || ''), Number(alquilerId)]);
     registrarRecibo(db, { alquiler_id: Number(alquilerId), monto: round2(Number(a.monto)), fecha: f, metodo: String(o.metodo || ''), referencia: String(o.referencia || '') });
+    logAuditoria(db, 'pago', 'alquiler', Number(alquilerId), 'Cuota completada con abono final · ' + String(a.moneda) + ' ' + round2(Number(a.monto)).toFixed(2), o.registrado_por);
   }
   return abonosAlquiler(db, alquilerId);
 }
@@ -464,17 +559,22 @@ function abonoEliminar(db, abonoId) {
 
 // ---------- Gastos ----------
 const CATEGORIAS = ['luz', 'agua', 'internet', 'remodelacion', 'otros'];
+const CATEGORIAS_CXP = ['agua','electricidad','internet','mantenimiento','reparacion','limpieza','seguridad','compra','impuestos','servicios','otros'];
+const MONEDAS = ['RD$', 'USD'];
+function monedaOk(m) { return MONEDAS.indexOf(String(m || '')) >= 0 ? String(m) : 'RD$'; }
 function listGastos(db, opts) {
   const o = opts || {};
   const where = [];
   const params = [];
-  if (o.mes) { where.push("strftime('%Y-%m', fecha) = ?"); params.push(String(o.mes)); }
-  if (o.categoria) { where.push('categoria = ?'); params.push(o.categoria); }
-  if (o.subcategoria) { where.push('subcategoria = ?'); params.push(o.subcategoria); }
-  if (o.estudio_id) { where.push('estudio_id = ?'); params.push(Number(o.estudio_id)); }
-  if (o.proveedor) { where.push('proveedor LIKE ?'); params.push('%' + String(o.proveedor) + '%'); }
-  if (o.desde) { where.push('fecha >= ?'); params.push(o.desde); }
-  if (o.hasta) { where.push('fecha <= ?'); params.push(o.hasta); }
+  if (o.mes) { where.push("strftime('%Y-%m', g.fecha) = ?"); params.push(String(o.mes)); }
+  if (o.categoria) { where.push('g.categoria = ?'); params.push(o.categoria); }
+  if (o.subcategoria) { where.push('g.subcategoria = ?'); params.push(o.subcategoria); }
+  if (o.estudio_id) { where.push('g.estudio_id = ?'); params.push(Number(o.estudio_id)); }
+  if (o.proveedor) { where.push('g.proveedor LIKE ?'); params.push('%' + String(o.proveedor) + '%'); }
+  if (o.moneda) { where.push('g.moneda = ?'); params.push(monedaOk(o.moneda)); }
+  if (o.estado) { where.push('g.estado = ?'); params.push(o.estado); }
+  if (o.desde) { where.push('g.fecha >= ?'); params.push(o.desde); }
+  if (o.hasta) { where.push('g.fecha <= ?'); params.push(o.hasta); }
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   return allToObj(db,
     `SELECT g.*, e.nombre AS estudio_nombre
@@ -494,24 +594,34 @@ function saveGasto(db, g) {
     proveedor: String(g.proveedor || ''),
     metodo_pago: String(g.metodo_pago || ''),
     referencia: String(g.referencia || ''),
-    comprobante: String(g.comprobante || '')
+    comprobante: String(g.comprobante || ''),
+    moneda: monedaOk(g.moneda),
+    fecha_vencimiento: String(g.fecha_vencimiento || ''),
+    estado: String(g.estado || 'pagado')
   };
   if (g.id) {
     run(db,
       `UPDATE gastos SET categoria=?,concepto=?,monto=?,fecha=?,estudio_id=?,notas=?,
-        subcategoria=?,proveedor=?,metodo_pago=?,referencia=?,comprobante=? WHERE id=?`,
+        subcategoria=?,proveedor=?,metodo_pago=?,referencia=?,comprobante=?,moneda=?,fecha_vencimiento=?,estado=? WHERE id=?`,
       [p.categoria, p.concepto, p.monto, p.fecha, p.estudio_id, p.notas,
-       p.subcategoria, p.proveedor, p.metodo_pago, p.referencia, p.comprobante, Number(g.id)]);
+       p.subcategoria, p.proveedor, p.metodo_pago, p.referencia, p.comprobante,
+       p.moneda, p.fecha_vencimiento, p.estado, Number(g.id)]);
     return Number(g.id);
   }
-  run(db, `INSERT INTO gastos (categoria,concepto,monto,fecha,estudio_id,notas,subcategoria,proveedor,metodo_pago,referencia,comprobante)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+  run(db, `INSERT INTO gastos (categoria,concepto,monto,fecha,estudio_id,notas,subcategoria,proveedor,metodo_pago,referencia,comprobante,moneda,fecha_vencimiento,estado)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [p.categoria, p.concepto, p.monto, p.fecha, p.estudio_id, p.notas,
-     p.subcategoria, p.proveedor, p.metodo_pago, p.referencia, p.comprobante]);
+     p.subcategoria, p.proveedor, p.metodo_pago, p.referencia, p.comprobante,
+     p.moneda, p.fecha_vencimiento, p.estado]);
   const id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
+  logAuditoria(db, 'gasto', 'gastos', id, 'Gasto ' + String(g.estado === 'programado' ? 'programado' : 'realizado') + ' de ' + String(p.moneda) + ' ' + monto.toFixed(2) + ' · ' + (p.concepto || p.categoria));
   return id;
 }
-function deleteGasto(db, id) { run(db, 'DELETE FROM gastos WHERE id=?', [Number(id)]); }
+function deleteGasto(db, id) {
+  const g = rowToObj(db, 'SELECT concepto, monto, moneda FROM gastos WHERE id=?', [Number(id)]);
+  run(db, 'DELETE FROM gastos WHERE id=?', [Number(id)]);
+  logAuditoria(db, 'eliminar', 'gastos', Number(id), 'Se eliminó el gasto ' + (g && g.concepto ? g.concepto : '') + (g && g.moneda && g.monto ? ' · ' + g.moneda + ' ' + Number(g.monto).toFixed(2) : ''));
+}
 function gastosMes(db, mes) {
   const m = String(mes || mesHoy());
   const rows = allToObj(db,
@@ -837,14 +947,41 @@ function backupInfo(db) {
 }
 
 // ---------- Órdenes de mantenimiento ----------
+const ESTADOS_ORDEN_F2 = ['reportado', 'en_revision', 'aprobado', 'en_reparacion', 'completado', 'cancelado'];
 function getOrden(db, id) { return rowToObj(db, 'SELECT * FROM ordenes WHERE id=?', [Number(id)]); }
 function crearOrden(db, d) {
+  if (!d.estudio_id) throw new Error('Debes seleccionar un estudio para la orden de mantenimiento');
+  if (!String(d.detalle || '').trim()) throw new Error('El detalle de la orden es obligatorio');
+  const estado = ESTADOS_ORDEN_F2.indexOf(d.estado) >= 0 ? d.estado : 'reportado';
   run(db, `INSERT INTO ordenes (estudio_id,inquilino_id,detalle,estado,prioridad,costo_estimado,proveedor)
            VALUES (?,?,?,?,?,?,?)`,
-    [d.estudio_id || null, d.inquilino_id || null, String(d.detalle || ''), 'abierta',
+    [d.estudio_id || null, d.inquilino_id || null, String(d.detalle || ''), estado,
      String(d.prioridad || 'media'), round2(d.costo_estimado || 0), String(d.proveedor || '')]);
   const id = Number(db.exec('SELECT last_insert_rowid() AS id')[0].values[0][0]);
+  logAuditoria(db, 'crear', 'mantenimiento', id, 'Orden de mantenimiento ' + String(d.detalle || '').slice(0, 60) + ' (' + estado + ')');
   return getOrden(db, id);
+}
+function cambiarEstadoOrden(db, id, estado, opts) {
+  const o = opts || {};
+  const est = ESTADOS_ORDEN_F2.indexOf(estado) >= 0 ? estado : 'reportado';
+  const actual = getOrden(db, Number(id));
+  if (!actual) throw new Error('Orden no encontrada');
+  if (est === 'cancelado') {
+    run(db, `UPDATE ordenes SET estado=?, fecha_cierre=? WHERE id=?`, [est, hoy(), Number(id)]);
+    logAuditoria(db, 'actualizar', 'mantenimiento', Number(id), 'Orden #' + id + ' cancelada');
+    return getOrden(db, Number(id));
+  }
+  run(db, `UPDATE ordenes SET estado=?, costo=?, fecha_cierre=? WHERE id=?`,
+    [est, est === 'completado' ? round2(o.costo || actual.costo_estimado || 0) : actual.costo, est === 'completado' ? hoy() : '', Number(id)]);
+  logAuditoria(db, 'actualizar', 'mantenimiento', Number(id), 'Orden #' + id + ' → ' + est + (est === 'completado' && parseFloat(o.costo) > 0 ? ' · costo ' + round2(o.costo).toFixed(2) : ''));
+  if (est === 'completado' && parseFloat(o.costo) > 0) {
+    saveGasto(db, {
+      categoria: 'otros', concepto: 'Mantenimiento #' + Number(id) + ' · ' + String(actual.detalle || '').slice(0, 60),
+      monto: round2(o.costo), fecha: hoy(), estudio_id: actual.estudio_id,
+      proveedor: actual.proveedor || '', moneda: monedaOk(actual.moneda), estado: 'pagado'
+    });
+  }
+  return getOrden(db, Number(id));
 }
 function listOrdenes(db, opts) {
   const o = opts || {};
@@ -859,12 +996,13 @@ function listOrdenes(db, opts) {
     LEFT JOIN estudios e ON e.id = o.estudio_id
     LEFT JOIN inquilinos i ON i.id = o.inquilino_id
     ${where}
-    ORDER BY CASE o.estado WHEN 'abierta' THEN 0 ELSE 1 END, o.id DESC`, params);
+    ORDER BY CASE o.estado WHEN 'abierta' THEN 0 WHEN 'reportado' THEN 0 WHEN 'en_revision' THEN 0
+             WHEN 'aprobado' THEN 0 WHEN 'en_reparacion' THEN 0 ELSE 1 END, o.id DESC`, params);
 }
 function ordenesAbiertas(db) {
   return allToObj(db, `SELECT o.*, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
     FROM ordenes o LEFT JOIN estudios e ON e.id = o.estudio_id LEFT JOIN inquilinos i ON i.id = o.inquilino_id
-    WHERE o.estado = 'abierta' ORDER BY o.id DESC`);
+    WHERE o.estado IN ('abierta','reportado','en_revision','aprobado','en_reparacion') ORDER BY o.id DESC`);
 }
 function cerrarOrden(db, id, costo, notas) {
   run(db, `UPDATE ordenes SET estado='cerrada', costo=?, cerrado=datetime('now','localtime'),
@@ -872,7 +1010,10 @@ function cerrarOrden(db, id, costo, notas) {
   if (notas) run(db, 'UPDATE ordenes SET detalle = ? WHERE id=?', [String(notas), Number(id)]);
   return getOrden(db, id);
 }
-function deleteOrden(db, id) { run(db, 'DELETE FROM ordenes WHERE id=?', [Number(id)]); }
+function deleteOrden(db, id) {
+  run(db, 'DELETE FROM ordenes WHERE id=?', [Number(id)]);
+  logAuditoria(db, 'eliminar', 'mantenimiento', Number(id), 'Se eliminó la orden de mantenimiento #' + id);
+}
 function resumenMantenimientoEstudio(db, estudioId) {
   const r = rowToObj(db,
     `SELECT COUNT(*) AS n,
@@ -937,6 +1078,8 @@ function getContrato(db, id) {
 }
 function saveContrato(db, c) {
   if (!c.estudio_id) throw new Error('El estudio es obligatorio');
+  const renta = round2(c.renta);
+  if (!(renta > 0)) throw new Error('La renta mensual debe ser mayor que 0');
   const estudioId = Number(c.estudio_id);
   // Si vienen datos de un inquilino nuevo (sin id), créalo y asócialo al estudio.
   let inquilinoId = c.inquilino_id ? Number(c.inquilino_id) : null;
@@ -954,7 +1097,7 @@ function saveContrato(db, c) {
     fecha_inicio: String(c.fecha_inicio || hoy()),
     fecha_vencimiento: String(c.fecha_vencimiento || ''),
     duracion_meses: parseInt(c.duracion_meses, 10) || 12,
-    renta: round2(c.renta), deposito: round2(c.deposito),
+    renta, deposito: round2(c.deposito),
     dia_pago: parseInt(c.dia_pago, 10) || 5,
     incremento_pct: round2(c.incremento_pct || 0),
     aval_nombre: String(c.aval_nombre || ''), aval_telefono: String(c.aval_telefono || ''),
@@ -996,6 +1139,7 @@ function saveContrato(db, c) {
   run(db, `UPDATE alquileres SET inquilino_id=?, monto=?, fecha_vencimiento=?
            WHERE estudio_id=? AND mes=? AND pagado=0`,
     [inquilinoId, p.renta, fechaVencDe(mesHoy(), p.dia_pago), estudioId, mesHoy()]);
+  logAuditoria(db, c.id ? 'editar' : 'crear', 'contrato', id, (c.id ? 'Se modificó el contrato #' : 'Se creó el contrato #') + id + ' · renta ' + String(c.moneda || 'RD$') + ' ' + p.renta.toFixed(2));
   return getContrato(db, id);
 }
 function terminarContrato(db, id) {
@@ -1008,6 +1152,7 @@ function terminarContrato(db, id) {
     liberarEstudio(db, Number(c.estudio_id));
     run(db, 'UPDATE estudios SET inquilino_id=NULL, estado=? WHERE id=?', ['disponible', Number(c.estudio_id)]);
   }
+  logAuditoria(db, 'terminar', 'contrato', Number(id), 'Se terminó el contrato del estudio ' + (c.estudio_nombre || ''));
   return getContrato(db, id);
 }
 function eliminarContrato(db, id) {
@@ -1020,6 +1165,7 @@ function eliminarContrato(db, id) {
     run(db, 'UPDATE estudios SET inquilino_id=NULL, estado=? WHERE id=?', ['disponible', Number(c.estudio_id)]);
   }
   run(db, 'DELETE FROM contratos WHERE id=?', [Number(id)]);
+  logAuditoria(db, 'eliminar', 'contrato', Number(id), 'Se eliminó el contrato del estudio ' + (c.estudio_nombre || ''));
   return { ok: true };
 }
 function renovarContrato(db, id, nuevaVencimiento, nuevaRenta, nuevaDuracion) {
@@ -1075,7 +1221,9 @@ function agregarNota(db, entidad, entidadId, texto, usuario) {
     [String(entidad), Number(entidadId), t, String(usuario || '')]);
   return listNotas(db, entidad, entidadId);
 }
-function borrarNota(db, id) { run(db, 'DELETE FROM notas WHERE id=?', [Number(id)]); return { ok: true }; }
+function borrarNota(db, id) { run(db, 'DELETE FROM notas WHERE id=?', [Number(id)]); logAuditoria(db, 'eliminar', 'abono', Number(abonoId), 'Se eliminó un abono de ' + String(ab.moneda || '') + ' ' + Number(ab.monto || 0).toFixed(2) + (a ? ' · estudio/cuota #' + a.id : ''));
+  return { ok: true };
+}
 
 // ---------- WhatsApp ----------
 // Normaliza un número dominicano para wa.me: 1 + 10 dígitos.
@@ -1332,6 +1480,604 @@ function buscarGlobal(db, q) {
   return out;
 }
 
+// ---------- Fase 2: Proveedores ----------
+function listProveedores(db, q) {
+  const s = '%' + String(q || '').trim() + '%';
+  const filas = String(q || '').trim()
+    ? allToObj(db, `SELECT p.* FROM proveedores p WHERE p.activo=1 AND (p.nombre LIKE ? OR p.servicio LIKE ? OR p.telefono LIKE ? OR p.correo LIKE ?) ORDER BY p.nombre`, [s, s, s, s])
+    : allToObj(db, `SELECT p.* FROM proveedores p WHERE p.activo=1 ORDER BY p.nombre`);
+  return filas.map((p) => {
+    const cxp = rowToObj(db,
+      `SELECT COALESCE(SUM(monto),0) AS s FROM cuentas_por_pagar WHERE proveedor_id=? AND pagado=0 AND estado<>'cancelada'`,
+      [Number(p.id)]);
+    return { ...p, deuda_pendiente: round2((cxp && cxp.s) || 0) };
+  });
+}
+function getProveedor(db, id) {
+  const p = rowToObj(db, 'SELECT * FROM proveedores WHERE id=?', [Number(id)]);
+  if (!p) throw new Error('Proveedor no encontrado');
+  p.cuentas = allToObj(db,
+    `SELECT cp.*, e.nombre AS estudio_nombre FROM cuentas_por_pagar cp
+     LEFT JOIN estudios e ON e.id = cp.estudio_id WHERE cp.proveedor_id=? ORDER BY cp.fecha_vencimiento DESC LIMIT 30`,
+    [Number(id)]);
+  return p;
+}
+function saveProveedor(db, d) {
+  const nombre = String(d.nombre || '').trim();
+  if (!nombre) throw new Error('El nombre del proveedor es obligatorio');
+  const p = {
+    nombre, telefono: String(d.telefono || ''), correo: String(d.correo || ''),
+    servicio: String(d.servicio || ''), direccion: String(d.direccion || ''),
+    notas: String(d.notas || '')
+  };
+  if (d.id) {
+    run(db, 'UPDATE proveedores SET nombre=?,telefono=?,correo=?,servicio=?,direccion=?,notas=? WHERE id=?',
+      [p.nombre, p.telefono, p.correo, p.servicio, p.direccion, p.notas, Number(d.id)]);
+    logAuditoria(db, 'editar', 'proveedor', Number(d.id), 'Se modificó el proveedor ' + nombre);
+    return Number(d.id);
+  }
+  run(db, 'INSERT INTO proveedores (nombre,telefono,correo,servicio,direccion,notas) VALUES (?,?,?,?,?,?)',
+    [p.nombre, p.telefono, p.correo, p.servicio, p.direccion, p.notas]);
+  const id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
+  logAuditoria(db, 'crear', 'proveedor', id, 'Se creó el proveedor ' + nombre);
+  return id;
+}
+function deleteProveedor(db, id) {
+  const idn = Number(id);
+  const p = rowToObj(db, 'SELECT nombre FROM proveedores WHERE id=?', [idn]);
+  const conCuentas = rowToObj(db, 'SELECT id FROM cuentas_por_pagar WHERE proveedor_id=? AND pagado=0 LIMIT 1', [idn]);
+  if (conCuentas) throw new Error('El proveedor tiene cuentas por pagar pendientes; no se puede eliminar');
+  run(db, 'UPDATE proveedores SET activo=0 WHERE id=?', [idn]);
+  run(db, `UPDATE cuentas_por_pagar SET proveedor_id=NULL WHERE proveedor_id=? AND pagado=1`, [idn]);
+  logAuditoria(db, 'archivar', 'proveedor', idn, 'Se archivó el proveedor ' + (p && p.nombre ? p.nombre : ''));
+  return { ok: true };
+}
+
+// ---------- Fase 2: Cuentas por pagar ----------
+function estadoCuentaPagar(c) {
+  const est = String((c && c.estado) || '').trim();
+  if (est === 'pendiente' || est === 'pagada' || est === 'cancelada') return est;
+  if (Number(c && c.pagado) === 1) return 'pagada';
+  return 'pendiente';
+}
+function listCuentasPagar(db, opts) {
+  const o = opts || {};
+  const where = [];
+  const params = [];
+  if (o.estado) { where.push('cp.estado = ?'); params.push(o.estado); }
+  if (o.categoria) { where.push('cp.categoria = ?'); params.push(o.categoria); }
+  if (o.proveedor_id) { where.push('cp.proveedor_id = ?'); params.push(Number(o.proveedor_id)); }
+  if (o.estudio_id) { where.push('cp.estudio_id = ?'); params.push(Number(o.estudio_id)); }
+  if (o.pendientes) { where.push("cp.pagado=0 AND cp.estado <> 'cancelada'"); }
+  if (o.desde) { where.push('cp.fecha_vencimiento >= ?'); params.push(o.desde); }
+  if (o.hasta) { where.push('cp.fecha_vencimiento <= ?'); params.push(o.hasta); }
+  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  return allToObj(db,
+    `SELECT cp.*, pr.nombre AS proveedor_nombre, e.nombre AS estudio_nombre
+     FROM cuentas_por_pagar cp
+     LEFT JOIN proveedores pr ON pr.id = cp.proveedor_id
+     LEFT JOIN estudios e ON e.id = cp.estudio_id
+     ${w} ORDER BY
+       CASE cp.estado WHEN 'pendiente' THEN 0 WHEN 'pagada' THEN 1 ELSE 2 END,
+       cp.fecha_vencimiento ASC`, params)
+    .map((c) => {
+      const venc = c.fecha_vencimiento && c.fecha_vencimiento <= hoy() && Number(c.pagado) === 0 && c.estado !== 'cancelada';
+      return { ...c, estado: estadoCuentaPagar(c), vencida: Boolean(venc) };
+    });
+}
+function getCuentaPagar(db, id) {
+  const c = rowToObj(db,
+    `SELECT cp.*, pr.nombre AS proveedor_nombre, e.nombre AS estudio_nombre
+     FROM cuentas_por_pagar cp
+     LEFT JOIN proveedores pr ON pr.id = cp.proveedor_id
+     LEFT JOIN estudios e ON e.id = cp.estudio_id
+     WHERE cp.id=?`, [Number(id)]);
+  if (!c) throw new Error('Cuenta por pagar no encontrada');
+  return { ...c, estado: estadoCuentaPagar(c) };
+}
+function saveCuentaPagar(db, d) {
+  const monto = round2(d.monto);
+  if (!(monto > 0)) throw new Error('El monto debe ser mayor que 0');
+  const p = {
+    proveedor_id: d.proveedor_id ? Number(d.proveedor_id) : null,
+    categoria: CATEGORIAS_CXP.indexOf(d.categoria) >= 0 ? d.categoria : 'otros',
+    concepto: String(d.concepto || ''),
+    estudio_id: d.estudio_id ? Number(d.estudio_id) : null,
+    monto, moneda: monedaOk(d.moneda),
+    fecha_vencimiento: String(d.fecha_vencimiento || (d.dias ? '' : '')),
+    estado: (d.estado && ['pendiente', 'cancelada'].indexOf(d.estado) >= 0) ? d.estado : 'pendiente',
+    notas: String(d.notas || ''),
+    comprobante: String(d.comprobante || '')
+  };
+  if (d.id) {
+    const actual = getCuentaPagar(db, d.id);
+    if (actual && actual.estado === 'pagada') throw new Error('Una cuenta pagada no se puede modificar; cree una nueva');
+    run(db, `UPDATE cuentas_por_pagar SET proveedor_id=?,categoria=?,concepto=?,estudio_id=?,monto=?,moneda=?,fecha_vencimiento=?,estado=?,notas=?,comprobante=?
+             WHERE id=?`,
+      [p.proveedor_id, p.categoria, p.concepto, p.estudio_id, p.monto, p.moneda,
+       p.fecha_vencimiento, p.estado, p.notas, p.comprobante, Number(d.id)]);
+    logAuditoria(db, 'editar', 'cuenta_pagar', Number(d.id), 'Se modificó la cuenta por pagar ' + (p.concepto || ''));
+    return Number(d.id);
+  }
+  run(db, `INSERT INTO cuentas_por_pagar (proveedor_id,categoria,concepto,estudio_id,monto,moneda,fecha_vencimiento,estado,notas,comprobante)
+           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [p.proveedor_id, p.categoria, p.concepto, p.estudio_id, p.monto, p.moneda,
+     p.fecha_vencimiento, p.estado, p.notas, p.comprobante]);
+  const id = Number(rowToObj(db, 'SELECT last_insert_rowid() AS id').id);
+  logAuditoria(db, 'crear', 'cuenta_pagar', id, 'Cuenta por pagar de ' + p.moneda + ' ' + monto.toFixed(2) + ' · ' + (p.concepto || ''));
+  return id;
+}
+function pagarCuentaPagar(db, id, opts) {
+  const o = opts || {};
+  const c = getCuentaPagar(db, Number(id));
+  if (c.estado === 'pagada') throw new Error('Esta cuenta ya está pagada');
+  if (c.estado === 'cancelada') throw new Error('No se puede pagar una cuenta cancelada');
+  const f = o.fecha || hoy();
+  run(db, `UPDATE cuentas_por_pagar SET pagado=1, fecha_pago=?, metodo_pago=?, referencia=?, estado='pagada' WHERE id=?`,
+    [f, String(o.metodo || ''), String(o.referencia || ''), Number(id)]);
+  // Al pagar una cuenta por pagar se registra el gasto realizado (Fase 2 §6).
+  const gastoId = saveGasto(db, {
+    categoria: mapearCategoriaGasto(c.categoria),
+    concepto: c.concepto || 'Cuenta por pagar',
+    monto: Number(c.monto),
+    fecha: f,
+    estudio_id: c.estudio_id,
+    proveedor: c.proveedor_nombre || '',
+    metodo_pago: String(o.metodo || ''),
+    referencia: String(o.referencia || ''),
+    moneda: c.moneda,
+    estado: 'pagado'
+  });
+  run(db, 'UPDATE cuentas_por_pagar SET gasto_id=? WHERE id=?', [gastoId, Number(id)]);
+  logAuditoria(db, 'pagar', 'cuenta_pagar', Number(id), 'Se pagó la cuenta ' + (c.concepto || '') + ' · ' + String(c.moneda) + ' ' + Number(c.monto).toFixed(2) + ' (' + String(o.metodo || '') + ')');
+  return getCuentaPagar(db, Number(id));
+}
+function mapearCategoriaGasto(cat) {
+  const M = { agua: 'agua', electricidad: 'luz', internet: 'internet', mantenimiento: 'otros', reparacion: 'remodelacion', limpieza: 'otros', seguridad: 'otros', compra: 'otros', impuestos: 'otros', servicios: 'otros', otros: 'otros' };
+  return M[cat] || 'otros';
+}
+function eliminarCuentaPagar(db, id) {
+  const c = getCuentaPagar(db, Number(id));
+  if (c.estado === 'pagada') throw new Error('Una cuenta pagada no se puede eliminar desde aquí; borre el gasto vinculado');
+  run(db, 'DELETE FROM cuentas_por_pagar WHERE id=?', [Number(id)]);
+  run(db, `DELETE FROM alertas WHERE tipo='cxp_vencida' AND entidad_id=?`, [Number(id)]);
+  logAuditoria(db, 'eliminar', 'cuenta_pagar', Number(id), 'Se eliminó la cuenta por pagar ' + (c.concepto || ''));
+  return { ok: true };
+}
+
+// ---------- Fase 2: Alertas ----------
+function alertasVivas(db) {
+  const hoyISO = hoy();
+  const en7 = new Date();
+  en7.setDate(en7.getDate() + 7);
+  const hasta7 = en7.toISOString().slice(0, 10);
+  const en30 = new Date();
+  en30.setDate(en30.getDate() + 30);
+  const hasta30 = en30.toISOString().slice(0, 10);
+  const out = [];
+  // Alquiler vencido (saldo > 0 y fecha_vencimiento < hoy).
+  for (const c of allToObj(db,
+    `SELECT a.id, a.mes, a.monto, a.fecha_vencimiento, a.moneda, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre,
+            (SELECT COALESCE(SUM(ab.monto),0) FROM abonos ab WHERE ab.alquiler_id=a.id) AS abonado
+     FROM alquileres a
+     JOIN estudios e ON e.id=a.estudio_id
+     LEFT JOIN inquilinos i ON i.id=a.inquilino_id
+     WHERE a.pagado=0 AND a.fecha_vencimiento <> '' AND a.fecha_vencimiento IS NOT NULL AND a.fecha_vencimiento < ?
+     ORDER BY a.fecha_vencimiento`, [hoyISO])) {
+    const saldo = round2(Number(c.monto) - Number(c.abonado));
+    if (saldo > 0) out.push({
+      tipo: 'alquiler_vencido', entidad_id: Number(c.id),
+      titulo: 'Alquiler vencido',
+      mensaje: `${c.estudio_nombre} · ${c.inquilino_nombre || 'Sin inquilino'} · ${c.mes} · ${c.moneda} ${saldo.toFixed(2)}`
+    });
+  }
+  // Alquiler próximo a vencer (7 días).
+  for (const c of allToObj(db,
+    `SELECT a.id, a.mes, a.fecha_vencimiento, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
+     FROM alquileres a JOIN estudios e ON e.id=a.estudio_id LEFT JOIN inquilinos i ON i.id=a.inquilino_id
+     WHERE a.pagado=0 AND a.fecha_vencimiento BETWEEN ? AND ?`, [hoyISO, hasta7])) {
+    out.push({
+      tipo: 'alquiler_proximo', entidad_id: Number(c.id),
+      titulo: 'Alquiler próximo a vencer',
+      mensaje: `${c.estudio_nombre} · ${c.mes} · vence el ${c.fecha_vencimiento}`
+    });
+  }
+  // Cuenta por pagar vencida.
+  for (const c of allToObj(db,
+    `SELECT cp.id, cp.concepto, cp.fecha_vencimiento, cp.monto, cp.moneda, pr.nombre AS proveedor
+     FROM cuentas_por_pagar cp LEFT JOIN proveedores pr ON pr.id=cp.proveedor_id
+     WHERE cp.pagado=0 AND cp.estado='pendiente' AND cp.fecha_vencimiento <> '' AND cp.fecha_vencimiento IS NOT NULL
+       AND cp.fecha_vencimiento < ?`, [hoyISO])) {
+    out.push({
+      tipo: 'cxp_vencida', entidad_id: Number(c.id),
+      titulo: 'Cuenta por pagar vencida',
+      mensaje: `${c.proveedor || 'Proveedor'} · ${c.concepto || 'Sin concepto'} · ${c.moneda} ${Number(c.monto).toFixed(2)}`
+    });
+  }
+  // Contratos próximos a vencer (30 días).
+  for (const c of allToObj(db,
+    `SELECT c.id, c.fecha_vencimiento, c.fecha_inicio, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
+     FROM contratos c LEFT JOIN estudios e ON e.id=c.estudio_id LEFT JOIN inquilinos i ON i.id=c.inquilino_id
+     WHERE c.estado IN ('activo','vencido') AND c.fecha_vencimiento BETWEEN ? AND ?
+     ORDER BY c.fecha_vencimiento`, [hoyISO, hasta30])) {
+    out.push({
+      tipo: 'contrato_vence', entidad_id: Number(c.id),
+      titulo: 'Contrato próximo a vencer',
+      mensaje: `${c.estudio_nombre || 'Estudio'} · ${c.inquilino_nombre || 'Sin inquilino'} · vence el ${c.fecha_vencimiento}`
+    });
+  }
+  // Mantenimientos abiertos / en progreso.
+  for (const o of allToObj(db,
+    `SELECT o.id, o.detalle, o.estado, o.prioridad, e.nombre AS estudio_nombre
+     FROM ordenes o LEFT JOIN estudios e ON e.id=o.estudio_id
+     WHERE o.estado NOT IN ('completado','cancelada') AND o.estado <> 'cerrada'`)) {
+    out.push({
+      tipo: 'mantenimiento_pendiente', entidad_id: Number(o.id),
+      titulo: 'Mantenimiento pendiente',
+      mensaje: `${o.estudio_nombre || 'Estudio'} · ${o.detalle || 'Sin detalle'} (${o.estado})`
+    });
+  }
+  // Unidades disponibles.
+  for (const e of allToObj(db, `SELECT id, nombre FROM estudios WHERE activo=1 AND inquilino_id IS NULL ORDER BY nombre`)) {
+    out.push({
+      tipo: 'unidad_disponible', entidad_id: Number(e.id),
+      titulo: 'Unidad disponible',
+      mensaje: `${e.nombre} no tiene inquilino`
+    });
+  }
+  return out;
+}
+function sincronizarAlertas(db) {
+  const vivas = alertasVivas(db);
+  const clavesActivas = {};
+  for (const v of vivas) {
+    const clave = String(v.tipo) + ':' + Number(v.entidad_id);
+    clavesActivas[clave] = true;
+    const exist = rowToObj(db, `SELECT id FROM alertas WHERE tipo=? AND entidad_id=?`, [v.tipo, Number(v.entidad_id)]);
+    if (exist) {
+      run(db, `UPDATE alertas SET titulo=?, mensaje=?, leida=0 WHERE id=?`, [v.titulo, v.mensaje, Number(exist.id)]);
+    } else {
+      run(db, `INSERT INTO alertas (tipo,entidad_id,titulo,mensaje,leida) VALUES (?,?,?,?,0)`,
+        [v.tipo, Number(v.entidad_id), v.titulo, v.mensaje]);
+    }
+  }
+  // Retira alertas cuya condición ya se resolvió.
+  const todas = allToObj(db, `SELECT id, tipo, entidad_id FROM alertas`);
+  for (const a of todas) {
+    if (!clavesActivas[String(a.tipo) + ':' + Number(a.entidad_id)]) run(db, `DELETE FROM alertas WHERE id=?`, [Number(a.id)]);
+  }
+  return true;
+}
+function listAlertas(db, incluirLeidas) {
+  if (!incluirLeidas) sincronizarAlertas(db);
+  return allToObj(db,
+    `SELECT * FROM alertas ORDER BY leida ASC, id DESC
+     LIMIT ${incluirLeidas ? 100 : 60}`);
+}
+function contarAlertas(db) {
+  sincronizarAlertas(db);
+  const noLeidas = rowToObj(db, `SELECT COUNT(*) AS n FROM alertas WHERE leida=0`).n || 0;
+  const porTipo = {};
+  for (const r of allToObj(db, `SELECT tipo, COUNT(*) AS n FROM alertas GROUP BY tipo`)) porTipo[r.tipo] = Number(r.n);
+  return { noLeidas: Number(noLeidas), porTipo };
+}
+function marcarAlertasLeidas(db, ids) {
+  const lista = (Array.isArray(ids) ? ids : [ids]).map(Number).filter(Boolean);
+  if (lista.length) run(db, `UPDATE alertas SET leida=1 WHERE id IN (${lista.map(() => '?').join(',')})`, lista);
+  return contarAlertas(db);
+}
+function eliminarAlerta(db, id) {
+  run(db, `DELETE FROM alertas WHERE id=?`, [Number(id)]);
+  return contarAlertas(db);
+}
+
+// ---------- Fase 2: Calendario ----------
+function eventosCalendario(db, mes) {
+  let m = String(mes || mesHoy());
+  if (/^\d{4}-\d{2}$/.test(m)) m += '-01';
+  const inicio = m.slice(0, 7) + '-01';
+  const fin = new Date(inicio + 'T00:00:00');
+  fin.setMonth(fin.getMonth() + 1);
+  fin.setDate(0);
+  const hasta = fin.toISOString().slice(0, 10);
+  const eventos = [];
+  for (const c of allToObj(db,
+    `SELECT a.id, a.mes, a.monto, a.moneda, a.fecha_vencimiento, a.pagado,
+            e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
+     FROM alquileres a JOIN estudios e ON e.id=a.estudio_id LEFT JOIN inquilinos i ON i.id=a.inquilino_id
+     WHERE a.fecha_vencimiento BETWEEN ? AND ?`, [inicio, hasta])) {
+    eventos.push({
+      fecha: c.fecha_vencimiento, tipo: 'alquiler',
+      titulo: c.estudio_nombre, subtitulo: c.inquilino_nombre || 'Sin inquilino',
+      monto: Number(c.monto), moneda: c.moneda, estado: c.pagado ? 'pagado' : 'pendiente', ref: Number(c.id)
+    });
+  }
+  for (const r of allToObj(db,
+    `SELECT r.id, r.fecha, r.monto, r.moneda, a.mes AS mes_cuota, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
+     FROM recibos r LEFT JOIN alquileres a ON a.id=r.alquiler_id LEFT JOIN estudios e ON e.id=a.estudio_id
+     LEFT JOIN inquilinos i ON i.id=a.inquilino_id
+     WHERE r.fecha BETWEEN ? AND ? AND r.anulado=0`, [inicio, hasta])) {
+    eventos.push({
+      fecha: r.fecha, tipo: 'pago', titulo: r.estudio_nombre || 'Recibo',
+      subtitulo: r.numero, monto: Number(r.monto), moneda: r.moneda, estado: 'pagado', ref: Number(r.id)
+    });
+  }
+  for (const c of allToObj(db,
+    `SELECT c.id, c.fecha_inicio, c.fecha_vencimiento, e.nombre AS estudio_nombre, i.nombre AS inquilino_nombre
+     FROM contratos c LEFT JOIN estudios e ON e.id=c.estudio_id LEFT JOIN inquilinos i ON i.id=c.inquilino_id
+     WHERE (c.fecha_inicio BETWEEN ? AND ?) OR (c.fecha_vencimiento BETWEEN ? AND ?)`, [inicio, hasta, inicio, hasta])) {
+    if (c.fecha_inicio >= inicio && c.fecha_inicio <= hasta) eventos.push({
+      fecha: c.fecha_inicio, tipo: 'contrato', titulo: 'Inicio de contrato',
+      subtitulo: (c.estudio_nombre || '') + ' · ' + (c.inquilino_nombre || ''), monto: null, moneda: null, estado: 'info', ref: Number(c.id)
+    });
+    if (c.fecha_vencimiento >= inicio && c.fecha_vencimiento <= hasta) eventos.push({
+      fecha: c.fecha_vencimiento, tipo: 'contrato_fin', titulo: 'Vence contrato',
+      subtitulo: (c.estudio_nombre || '') + ' · ' + (c.inquilino_nombre || ''), monto: null, moneda: null, estado: 'aviso', ref: Number(c.id)
+    });
+  }
+  for (const cp of allToObj(db,
+    `SELECT cp.id, cp.concepto, cp.monto, cp.moneda, cp.fecha_vencimiento, cp.pagado, pr.nombre AS proveedor
+     FROM cuentas_por_pagar cp LEFT JOIN proveedores pr ON pr.id=cp.proveedor_id
+     WHERE cp.fecha_vencimiento BETWEEN ? AND ?`, [inicio, hasta])) {
+    eventos.push({
+      fecha: cp.fecha_vencimiento, tipo: 'cuenta', titulo: cp.concepto || 'Cuenta por pagar',
+      subtitulo: cp.proveedor || 'Proveedor', monto: Number(cp.monto), moneda: cp.moneda,
+      estado: cp.pagado ? 'pagado' : 'pendiente', ref: Number(cp.id)
+    });
+  }
+  for (const o of allToObj(db,
+    `SELECT o.id, o.detalle, o.estado, o.fecha_cierre, e.nombre AS estudio_nombre
+     FROM ordenes o LEFT JOIN estudios e ON e.id=o.estudio_id
+     WHERE o.creado BETWEEN ? AND ? AND o.estado NOT IN ('completado','cancelada','cerrada')`, [inicio, hasta])) {
+    eventos.push({
+      fecha: o.creado.slice(0, 10), tipo: 'mantenimiento', titulo: 'Mantenimiento',
+      subtitulo: o.estudio_nombre || 'Estudio', monto: null, moneda: null, estado: o.estado, ref: Number(o.id)
+    });
+  }
+  return eventos.sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+}
+
+// ---------- Fase 2: Flujo de caja (NUNCA mezcla monedas; lo esperado no es disponible) ----------
+function flujoCaja(db, dias) {
+  const D = Number(dias) || 30;
+  const hoyISO = hoy();
+  const limite = new Date();
+  limite.setDate(limite.getDate() + D);
+  const hastaISO = limite.toISOString().slice(0, 10);
+  const porMoneda = {};
+  const cur = {};
+  const pasar = (moneda, campo, m) => {
+    const md = monedaOk(moneda);
+    cur[md] = cur[md] || {};
+    cur[md][campo] = round2((cur[md][campo] || 0) + Number(m));
+  };
+  // Saldo inicial real: recibos cobrados MENOS gastos pagados hasta hoy.
+  for (const r of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM recibos WHERE anulado=0 AND fecha<=? GROUP BY moneda`, [hoyISO]))
+    pasar(r.moneda, 'cobrado', r.m || 0);
+  for (const g of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM gastos WHERE estado='pagado' AND fecha<=? GROUP BY moneda`, [hoyISO]))
+    pasar(g.moneda, 'gastado', g.m || 0);
+  for (const ab of allToObj(db,
+    `SELECT ab.moneda, SUM(ab.monto) AS m FROM abonos ab JOIN alquileres a ON a.id=ab.alquiler_id
+     WHERE strftime('%Y-%m-%d', ab.fecha)<=? AND a.pagado=0 GROUP BY ab.moneda`, [hoyISO]))
+    pasar(ab.moneda, 'abonado', ab.m || 0);
+  // Cobros esperados: saldo pendiente de alquileres con vencimiento en el rango (NO contable como disponible).
+  for (const c of allToObj(db,
+    `SELECT a.moneda, a.monto,
+            (SELECT COALESCE(SUM(ab.monto),0) FROM abonos ab WHERE ab.alquiler_id=a.id) AS abonado
+     FROM alquileres a WHERE a.pagado=0 AND a.fecha_vencimiento BETWEEN ? AND ?`, [hoyISO, hastaISO])) {
+    pasar(c.moneda, 'cobros_esperados', Math.max(0, Number(c.monto) - Number(c.abonado)));
+  }
+  // Pagos previstos: cuentas por pagar pendientes ya vencidas o con vencimiento en el rango.
+  for (const c of allToObj(db,
+    `SELECT moneda, SUM(monto) AS m FROM cuentas_por_pagar
+     WHERE pagado=0 AND estado='pendiente' AND fecha_vencimiento <> '' AND fecha_vencimiento IS NOT NULL
+       AND fecha_vencimiento <= ? GROUP BY moneda`, [hastaISO]))
+    pasar(c.moneda, 'cxp', c.m || 0);
+  // Gastos programados futuros.
+  for (const g of allToObj(db,
+    `SELECT moneda, SUM(monto) AS m FROM gastos WHERE estado='programado' AND fecha BETWEEN ? AND ? GROUP BY moneda`, [hoyISO, hastaISO]))
+    pasar(g.moneda, 'gastos_programados', g.m || 0);
+  for (const md of MONEDAS) {
+    if (!cur[md]) continue;
+    const c = cur[md];
+    c.disponible = round2(c.cobrado + c.abonado - c.gastado);
+    c.proyectado = round2(c.disponible + c.cobros_esperados - c.cxp - c.gastos_programados);
+    porMoneda[md] = c;
+  }
+  return { dias: D, desde: hoyISO, hasta: hastaISO, porMoneda };
+}
+
+// ---------- Fase 2: Dashboard financiero ----------
+function dashboardFinanciero(db, mes) {
+  const m = String(mes || mesHoy());
+  const cobros = cobrosMes(db, m);
+  const porMoneda = {};
+  const pasar = (md, campo, monto) => {
+    const mm = monedaOk(md);
+    porMoneda[mm] = porMoneda[mm] || { recaudado: 0, pendiente: 0, vencido: 0, cxp: 0, gastos: 0 };
+    porMoneda[mm][campo] = round2((porMoneda[mm][campo] || 0) + Number(monto));
+  };
+  const recaudado = cobros.filter((c) => c.pagado).reduce((s, c) => s + Number(c.monto), 0);
+  for (const c of cobros) {
+    const md = monedaOk(c.moneda);
+    if (c.pagado) pasar(md, 'recaudado', c.monto);
+    else if (c.estado === 'vencido') pasar(md, 'vencido', c.saldo);
+    else pasar(md, 'pendiente', c.saldo);
+  }
+  for (const g of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM gastos WHERE strftime('%Y-%m',fecha)=? GROUP BY moneda`, [m]))
+    pasar(g.moneda, 'gastos', g.m || 0);
+  const finMes = new Date(m + '-01T00:00:00');
+  finMes.setMonth(finMes.getMonth() + 1);
+  finMes.setDate(0);
+  const finMesISO = finMes.toISOString().slice(0, 10);
+  for (const c of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM cuentas_por_pagar WHERE estado='pendiente' AND pagado=0 AND fecha_vencimiento <> '' AND fecha_vencimiento <= ? GROUP BY moneda`,
+    [finMesISO]))
+    pasar(c.moneda, 'cxp', c.m || 0);
+  const ocup = resumenOcupacion(db);
+  const cxpPendientes = listCuentasPagar(db, { pendientes: true });
+  return {
+    mes: m,
+    porMoneda,
+    totalRecaudado: round2(cobros.filter((c) => c.pagado).reduce((s, c) => s + Number(c.monto), 0)),
+    pendientes: cobros.filter((c) => !c.pagado && c.estado !== 'vencido').length,
+    vencidos: cobros.filter((c) => c.vencido).length,
+    vencidosMonto: round2(cobros.filter((c) => c.vencido).reduce((s, c) => s + Number(c.saldo), 0)),
+    gastosMes: round2(allToObj(db, `SELECT COALESCE(SUM(monto),0) AS s FROM gastos WHERE strftime('%Y-%m',fecha)=?`, [m])[0].s),
+    ocupacion: ocup.porcentaje,
+    ocupacionOcupados: ocup.ocupado,
+    ocupacionTotal: ocup.total,
+    cxpPendientes: cxpPendientes.length,
+    cxpPendientesMonto: round2(cxpPendientes.reduce((s, c) => s + Number(c.monto), 0)),
+    cxpVencidas: cxpPendientes.filter((c) => c.vencida).length,
+    abonosMes: allToObj(db,
+      `SELECT COALESCE(SUM(monto),0) AS s FROM abonos WHERE strftime('%Y-%m',fecha)=? AND alquiler_id IN (SELECT id FROM alquileres WHERE pagado=0)`, [m])[0].s || 0
+  };
+}
+
+// ---------- Fase 2: Historial por propiedad ----------
+function historialPropiedad(db, estudioId) {
+  const id = Number(estudioId);
+  const estudio = rowToObj(db, 'SELECT * FROM estudios WHERE id=?', [id]);
+  if (!estudio) throw new Error('Propiedad no encontrada');
+  const ingresos = allToObj(db,
+    `SELECT a.mes, a.monto, a.moneda, a.pagado, i.nombre AS inquilino_nombre,
+            (SELECT COALESCE(SUM(ab.monto),0) FROM abonos ab WHERE ab.alquiler_id=a.id) AS abonado
+     FROM alquileres a LEFT JOIN inquilinos i ON i.id=a.inquilino_id
+     WHERE a.estudio_id=? ORDER BY a.mes DESC`, [id]);
+  const gastos = allToObj(db,
+    `SELECT g.* FROM gastos g WHERE g.estudio_id=? ORDER BY g.fecha DESC`, [id])
+    .map((g) => ({ ...g, categoria_label: g.categoria }));
+  const mantenimientos = allToObj(db,
+    `SELECT o.*, i.nombre AS inquilino_nombre FROM ordenes o LEFT JOIN inquilinos i ON i.id=o.inquilino_id
+     WHERE o.estudio_id=? ORDER BY o.id DESC`, [id]);
+  const ocupaciones = allToObj(db,
+    `SELECT oc.desde, oc.hasta, i.nombre AS inquilino_nombre FROM ocupaciones oc LEFT JOIN inquilinos i ON i.id=oc.inquilino_id
+     WHERE oc.estudio_id=? ORDER BY oc.desde DESC`, [id]);
+  const contratos = listarContratos(db, { estudio_id: id });
+  let ingresosTotal = 0, gastosTotal = 0;
+  for (const c of ingresos) if (Number(c.pagado) === 1) ingresosTotal += Number(c.monto);
+  for (const g of gastos) gastosTotal += Number(g.monto);
+  return {
+    estudio,
+    ingresos, gastos, mantenimientos, ocupaciones, contratos,
+    ingresosTotal: round2(ingresosTotal), gastosTotal: round2(gastosTotal),
+    utilidad: round2(ingresosTotal - gastosTotal)
+  };
+}
+
+// ---------- Fase 2: Historial por inquilino (unidades anteriores) ----------
+function historialInquilino(db, inquilinoId) {
+  const id = Number(inquilinoId);
+  const base = estadoCuentaInquilino(db, id);
+  const unidadesAnteriores = allToObj(db,
+    `SELECT oc.desde, oc.hasta, e.nombre AS estudio_nombre
+     FROM ocupaciones oc JOIN estudios e ON e.id=oc.estudio_id
+     WHERE oc.inquilino_id=? AND (oc.hasta IS NOT NULL AND oc.hasta <> '') ORDER BY oc.hasta DESC`, [id]);
+  const resumenPorMoneda = {};
+  for (const a of allToObj(db,
+    `SELECT a.moneda, a.monto, a.pagado FROM alquileres a WHERE a.inquilino_id=?`, [id])) {
+    const md = monedaOk(a.moneda);
+    resumenPorMoneda[md] = resumenPorMoneda[md] || { cobrado: 0, pendiente: 0, atrasos: 0 };
+    if (Number(a.pagado) === 1) resumenPorMoneda[md].cobrado += Number(a.monto);
+    else resumenPorMoneda[md].pendiente += Number(a.monto);
+  }
+  return { ...base, unidadesAnteriores, resumenPorMoneda };
+}
+
+function gastosMesPorMoneda(db, mes) {
+  const rows = allToObj(db,
+    `SELECT moneda, categoria, SUM(monto) AS total FROM gastos WHERE strftime('%Y-%m',fecha)=? GROUP BY moneda, categoria`, [String(mes || mesHoy())]);
+  const porMoneda = {};
+  for (const r of rows) {
+    const md = monedaOk(r.moneda);
+    porMoneda[md] = porMoneda[md] || { total: 0, porCategoria: {} };
+    porMoneda[md].porCategoria[r.categoria] = round2(r.total);
+    porMoneda[md].total = round2(porMoneda[md].total + Number(r.total));
+  }
+  return porMoneda;
+}
+
+// ---------- Fase 3 §2: Estadísticas (serie mensual, monedas, rendimiento) ----------
+function estadisticas(db, n) {
+  const nMes = Number(n) || 12;
+  const base = new Date();
+  const inicio = new Date(base.getFullYear(), base.getMonth() - (nMes - 1), 1);
+  const mesInicio = inicio.getFullYear() + '-' + String(inicio.getMonth() + 1).padStart(2, '0');
+  const porMoneda = {};
+  const sumaM = (md, campo, v) => { const mm = monedaOk(md); porMoneda[mm] = porMoneda[mm] || { facturado: 0, cobrado: 0, pendiente: 0, gastos: 0 }; porMoneda[mm][campo] = round2(porMoneda[mm][campo] + Number(v)); };
+  for (const a of allToObj(db, 'SELECT moneda, monto, pagado FROM alquileres WHERE mes >= ?', [mesInicio])) {
+    if (Number(a.pagado) === 1) sumaM(a.moneda, 'cobrado', a.monto);
+    else sumaM(a.moneda, 'pendiente', a.monto);
+    sumaM(a.moneda, 'facturado', a.monto);
+  }
+  for (const g of allToObj(db, 'SELECT moneda, SUM(monto) AS m FROM gastos WHERE fecha >= ? GROUP BY moneda', [mesInicio + '-01']))
+    sumaM(g.moneda, 'gastos', g.m || 0);
+  const seriePorMoneda = {};
+  for (let i = nMes - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    const mes = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    for (const a of allToObj(db, 'SELECT moneda, monto, pagado FROM alquileres WHERE mes=?', [mes])) {
+      const md = monedaOk(a.moneda);
+      seriePorMoneda[md] = seriePorMoneda[md] || {};
+      seriePorMoneda[md][mes] = seriePorMoneda[md][mes] || { mes, cobrado: 0, facturado: 0, gastos: 0, utilidad: 0 };
+      seriePorMoneda[md][mes].facturado = round2(seriePorMoneda[md][mes].facturado + Number(a.monto));
+      if (Number(a.pagado) === 1) seriePorMoneda[md][mes].cobrado = round2(seriePorMoneda[md][mes].cobrado + Number(a.monto));
+    }
+    for (const g of allToObj(db, `SELECT moneda, COALESCE(SUM(monto),0) AS m FROM gastos WHERE strftime('%Y-%m',fecha)=? GROUP BY moneda`, [mes])) {
+      const md = monedaOk(g.moneda);
+      seriePorMoneda[md] = seriePorMoneda[md] || {};
+      seriePorMoneda[md][mes] = seriePorMoneda[md][mes] || { mes, cobrado: 0, facturado: 0, gastos: 0, utilidad: 0 };
+      seriePorMoneda[md][mes].gastos = round2(Number(g.m || 0));
+    }
+  }
+  const serieOut = {};
+  const rangoMeses = [];
+  for (let i = nMes - 1; i >= 0; i--) {
+    const d = new Date(base.getFullYear(), base.getMonth() - i, 1);
+    rangoMeses.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  for (const md of Object.keys(porMoneda)) {
+    serieOut[md] = rangoMeses.map((mes) => (seriePorMoneda[md][mes] || { mes, cobrado: 0, facturado: 0, gastos: 0, utilidad: 0 }));
+  }
+  const monedaPrincipal = Object.keys(porMoneda).sort((a, b) => (porMoneda[b].facturado || 0) - (porMoneda[a].facturado || 0))[0] || '';
+  const totales = {};
+  for (const md of Object.keys(porMoneda)) {
+    const p = porMoneda[md];
+    totales[md] = { facturado: p.facturado, cobrado: p.cobrado, pendiente: p.pendiente, gastos: p.gastos, utilidad: round2(p.cobrado - p.gastos) };
+  }
+  const ocup = resumenOcupacion(db);
+  const moro = morosidadDetalle(db, {});
+  const estudios = allToObj(db, `SELECT e.id, e.nombre, e.moneda, e.alquiler AS renta FROM estudios e WHERE e.activo=1 ORDER BY e.nombre`);
+  const totalRenta = estudios.reduce((s, e) => s + Number(e.renta || 0), 0);
+  const conRenta = estudios.filter((e) => Number(e.renta || 0) > 0).length;
+  const cobradoMesAct = cobradoMes(db, mesHoy()).monto;
+  const facturadoHoy = round2((rowToObj(db, 'SELECT COALESCE(SUM(monto),0) AS s FROM alquileres WHERE mes=?', [mesHoy()]).s || 0));
+  const mp = porMoneda[monedaPrincipal] || {};
+  return {
+    n: nMes,
+    monedaPrincipal,
+    porMoneda,
+    totales,
+    seriePorMoneda: serieOut,
+    ocupacion: ocup,
+    morosidad: {
+      total: moro.total,
+      corrientes: moro.corrientes,
+      mes0: moro.mes0, mes1: moro.mes1, mes2: moro.mes2, mes3plus: moro.mes3plus,
+      filas: (moro.filas || []).length,
+      deudores: new Set((moro.filas || []).map((f) => f.inquilino_id)).size
+    },
+    rendimiento: {
+      rentaPromedio: conRenta ? round2(totalRenta / conRenta) : 0,
+      estudios: estudios.length,
+      ocupados: ocup.ocupado,
+      tasaCobroMes: facturadoHoy > 0 ? round2((cobradoMesAct / facturadoHoy) * 100) : 0,
+      cobradoPromedio: round2((mp.cobrado || 0) / nMes),
+      gastoPromedio: round2((mp.gastos || 0) / nMes)
+    }
+  };
+}
+
 module.exports = {
   getEmpresa, saveEmpresa,
   listEstudios, getEstudio, saveEstudio, deleteEstudio, setEstudioFoto, resumenEdificios,
@@ -1343,11 +2089,11 @@ module.exports = {
   siguienteNumeroRecibo, getRecibo, recibosDeAlquiler, listarRecibos, anularRecibo,
   listGastos, saveGasto, deleteGasto, gastosMes,
   importarEstudios,
-  agingMes, tendencia, rentabilidadEstudios, reporteFinanciero, reporteAnual,
+  agingMes, tendencia, rentabilidadEstudios, reporteFinanciero, reporteAnual, estadisticas,
   listGastosEstudio, saveGastosEstudio,
   deudasPorInquilino,
   getConfig, setConfig,
-  ordenesAbiertas, crearOrden, listOrdenes, cerrarOrden, getOrden, deleteOrden, resumenMantenimientoEstudio,
+  ordenesAbiertas, crearOrden, listOrdenes, cerrarOrden, getOrden, deleteOrden, resumenMantenimientoEstudio, cambiarEstadoOrden,
   aplicarPago, estadoCuentaInquilino, fichaInquilino,
   contratosPorVencer, listarContratos, getContrato, saveContrato, terminarContrato, eliminarContrato, renovarContrato,
   listNotas, agregarNota, borrarNota,
@@ -1356,5 +2102,13 @@ module.exports = {
   centroPendientes,
   buscarGlobal,
   promesaAgregar, promesasPendientes, listPromesas, promesaCerrar,
+  listProveedores, getProveedor, saveProveedor, deleteProveedor,
+  listCuentasPagar, getCuentaPagar, saveCuentaPagar, pagarCuentaPagar, eliminarCuentaPagar,
+  listAlertas, contarAlertas, marcarAlertasLeidas, eliminarAlerta, sincronizarAlertas,
+  eventosCalendario, flujoCaja, dashboardFinanciero,
+  historialPropiedad, historialInquilino, gastosMesPorMoneda,
+  MONEDAS, monedaOk,
+  logAuditoria, listAuditoria, resumenAuditoria, actividadReciente, archivados,
+  setPin, verificarPin, pinActivo, clearPin,
   hoy
 };

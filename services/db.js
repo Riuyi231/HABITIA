@@ -158,6 +158,51 @@ CREATE TABLE IF NOT EXISTS notas (
   usuario TEXT DEFAULT '',
   fecha TEXT DEFAULT (datetime('now','localtime'))
 );
+
+CREATE TABLE IF NOT EXISTS proveedores (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  nombre TEXT NOT NULL,
+  telefono TEXT DEFAULT '',
+  correo TEXT DEFAULT '',
+  servicio TEXT DEFAULT '',
+  direccion TEXT DEFAULT '',
+  notas TEXT DEFAULT '',
+  activo INTEGER DEFAULT 1,
+  creado TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS cuentas_por_pagar (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  proveedor_id INTEGER,
+  categoria TEXT NOT NULL DEFAULT 'servicios',
+  concepto TEXT DEFAULT '',
+  estudio_id INTEGER,
+  monto REAL DEFAULT 0,
+  moneda TEXT DEFAULT 'RD$',
+  fecha_vencimiento TEXT DEFAULT '',
+  estado TEXT DEFAULT 'pendiente',
+  pagado INTEGER DEFAULT 0,
+  fecha_pago TEXT,
+  metodo_pago TEXT DEFAULT '',
+  referencia TEXT DEFAULT '',
+  comprobante TEXT DEFAULT '',
+  gasto_id INTEGER,
+  notas TEXT DEFAULT '',
+  creado TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS alertas (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tipo TEXT NOT NULL,
+  entidad TEXT DEFAULT '',
+  entidad_id INTEGER,
+  titulo TEXT DEFAULT '',
+  mensaje TEXT DEFAULT '',
+  leida INTEGER DEFAULT 0,
+  fecha TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alertas_tipo_entidad ON alertas(tipo, entidad_id);
 `;
 
 function columnaExiste(db, tabla, col) {
@@ -197,6 +242,30 @@ function makeDb(db) {
   asegurarColumna(db, 'ordenes', 'costo_estimado', 'REAL DEFAULT 0');
   asegurarColumna(db, 'ordenes', 'proveedor', "TEXT DEFAULT ''");
   asegurarColumna(db, 'ordenes', 'fecha_cierre', "TEXT DEFAULT ''");
+  asegurarColumna(db, 'ordenes', 'foto', "TEXT DEFAULT ''");
+  asegurarColumna(db, 'ordenes', 'moneda', "TEXT DEFAULT 'RD$'");
+  // Fase 2: moneda explícita en todas las cuentas financieras.
+  asegurarColumna(db, 'alquileres', 'moneda', "TEXT DEFAULT 'RD$'");
+  asegurarColumna(db, 'gastos', 'moneda', "TEXT DEFAULT 'RD$'");
+  asegurarColumna(db, 'gastos', 'fecha_vencimiento', "TEXT DEFAULT ''");
+  asegurarColumna(db, 'gastos', 'estado', "TEXT DEFAULT 'pagado'");
+  asegurarColumna(db, 'contratos', 'moneda', "TEXT DEFAULT 'RD$'");
+  asegurarColumna(db, 'estudios', 'moneda', "TEXT DEFAULT 'RD$'");
+  asegurarColumna(db, 'abonos', 'moneda', "TEXT DEFAULT 'RD$'");
+  asegurarColumna(db, 'recibos', 'moneda', "TEXT DEFAULT 'RD$'");
+
+  // Fase 3: auditoría.
+  db.run(`CREATE TABLE IF NOT EXISTS actividad_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT DEFAULT (datetime('now','localtime')),
+    accion TEXT NOT NULL,
+    entidad TEXT NOT NULL,
+    entidad_id INTEGER,
+    detalle TEXT DEFAULT '',
+    usuario TEXT DEFAULT ''
+  )`);
+  asegurarColumna(db, 'actividad_log', 'detalle', "TEXT DEFAULT ''");
+  asegurarColumna(db, 'actividad_log', 'usuario', "TEXT DEFAULT ''");
 
   // Migración: los gastos fijos pasaron de un monto único por estudio
   // (columna gastos_fijos) a una lista de gastos (tabla gastos_estudio).

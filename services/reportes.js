@@ -18,6 +18,7 @@ const AMBAR = rgb(0.86, 0.6, 0.08);
 
 function fmt(n) { return new Intl.NumberFormat('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n) || 0); }
 const RD = (n) => 'RD$ ' + fmt(n);
+const MN = (n, moneda) => (['RD$', 'USD'].indexOf(String(moneda)) >= 0 ? String(moneda) : 'RD$') + ' ' + fmt(n);
 
 // Monto en letras (español) para el recibo.
 const UNIDADES = ['cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve',
@@ -442,7 +443,7 @@ async function reporteRecibo(empresa, cobro, estudio, inquilino) {
     ['Estudio', estudio && estudio.nombre ? String(estudio.nombre) : (cobro.estudio_nombre || '—')],
     ['Dirección', (estudio && estudio.direccion) || (cobro.estudio_direccion || '—')],
     ['Inquilino', (inquilino && inquilino.nombre) ? String(inquilino.nombre) : (cobro.inquilino_nombre || '—')],
-    ['Alquiler mensual', RD(cobro.monto)],
+    ['Alquiler mensual', MN(cobro.monto, cobro.moneda)],
     ['Método de pago', cobro.metodo_pago ? String(cobro.metodo_pago) : String(cobro.metodo || '—')],
     ['Referencia', String(cobro.referencia_pago || cobro.referencia || '—')]
   ];
@@ -465,15 +466,17 @@ async function reporteRecibo(empresa, cobro, estudio, inquilino) {
   ctx.page.drawRectangle({ x: ctx.M, y: ctx.y - boxH, width: boxW, height: boxH, color: AZUL_PALIDO });
   ctx.page.drawRectangle({ x: ctx.M, y: ctx.y - boxH, width: boxW, height: boxH, borderColor: AZUL_MARCA, borderWidth: 1.2 });
   const etiqTotal = pagadoCompleto ? 'TOTAL PAGADO' : 'ABONO RECIBIDO';
-  const badge = pagadoCompleto ? '' : '  ·  SALDO PENDIENTE ' + RD(Math.max(0, Number(cobro.monto) - abonado));
+  const badge = pagadoCompleto ? '' : '  ·  SALDO PENDIENTE ' + MN(Math.max(0, Number(cobro.monto) - abonado), cobro.moneda);
   ctx.page.drawText(etiqTotal, { x: ctx.M + 12, y: ctx.y - boxH / 2 - 5, size: 9, font: ctx.bold, color: AZUL_OSCURO });
   ctx.page.drawText(String(badge).toUpperCase(), { x: ctx.M + 12, y: ctx.y - boxH / 2 + 9, size: 7.5, font: ctx.bold, color: ROJO });
-  ctx.page.drawText(RD(montoPagado), { x: ctx.M + boxW - 12 - ctx.bold.widthOfTextAtSize(RD(montoPagado), 15), y: ctx.y - boxH / 2 - 9, size: 15, font: ctx.bold, color: AZUL_OSCURO });
+  const txtTotal = MN(montoPagado, cobro.moneda);
+  ctx.page.drawText(txtTotal, { x: ctx.M + boxW - 12 - ctx.bold.widthOfTextAtSize(txtTotal, 15), y: ctx.y - boxH / 2 - 9, size: 15, font: ctx.bold, color: AZUL_OSCURO });
   ctx.y -= boxH + 14;
 
   ctx.page.drawText((pagadoCompleto ? 'Recibí del inquilino la suma de:' : 'Recibí del inquilino la suma de') + (pagadoCompleto ? '' : ' (abono a la renta):'), { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: TINTA });
   ctx.y -= 14;
-  ctx.page.drawText(RD(montoPagado) + '  (' + letraMonto(Number(montoPagado)) + ' pesos dominicanos con 00/100)', { x: ctx.M, y: ctx.y, size: 9, font: ctx.bold, color: TINTA });
+  const unidadMoneda = (cobro.moneda === 'USD') ? 'dólares americanos con 00/100' : 'pesos dominicanos con 00/100';
+  ctx.page.drawText(MN(montoPagado, cobro.moneda) + '  (' + letraMonto(Number(montoPagado)) + ' ' + unidadMoneda + ')', { x: ctx.M, y: ctx.y, size: 9, font: ctx.bold, color: TINTA });
   ctx.y -= 14;
   ctx.page.drawText('correspondiente al alquiler del mes de ' + ETIQUETA_MES(cobro.mes) + ' del ' +
     (estudio && estudio.nombre ? String(estudio.nombre) : 'estudio'), { x: ctx.M, y: ctx.y, size: 9, font: ctx.font, color: TINTA, maxWidth: ctx.W });

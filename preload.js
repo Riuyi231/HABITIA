@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('api', {
   mantenimientoList: (opts) => ipcRenderer.invoke('mantenimiento:list', opts),
   mantenimientoSave: (d) => ipcRenderer.invoke('mantenimiento:save', d),
   mantenimientoCerrar: (id, costo, notas) => ipcRenderer.invoke('mantenimiento:cerrar', { id, costo, notas }),
+  mantenimientoEstado: (id, estado, costo) => ipcRenderer.invoke('mantenimiento:estado', { id, estado, costo }),
   mantenimientoDelete: (id) => ipcRenderer.invoke('mantenimiento:delete', { id }),
   mantenimientoResumenEstudio: (id) => ipcRenderer.invoke('mantenimiento:resumen-estudio', { id }),
 
@@ -76,6 +77,37 @@ contextBridge.exposeInMainWorld('api', {
   notasAdd: (entidad, entidadId, texto) => ipcRenderer.invoke('notas:add', { entidad, entidad_id: entidadId, texto }),
   notasDelete: (id) => ipcRenderer.invoke('notas:delete', { id }),
 
+  proveedoresList: (q) => ipcRenderer.invoke('proveedores:list', { q }),
+  proveedoresGet: (id) => ipcRenderer.invoke('proveedores:get', { id }),
+  proveedoresSave: (d) => ipcRenderer.invoke('proveedores:save', d),
+  proveedoresDelete: (id) => ipcRenderer.invoke('proveedores:delete', { id }),
+
+  cuentasPagarList: (opts) => ipcRenderer.invoke('cxp:list', opts),
+  cuentasPagarGet: (id) => ipcRenderer.invoke('cxp:get', { id }),
+  cuentasPagarSave: (d) => ipcRenderer.invoke('cxp:save', d),
+  cuentasPagarPagar: (id, fecha, metodo, referencia) => ipcRenderer.invoke('cxp:pagar', { id, fecha, metodo, referencia }),
+  cuentasPagarDelete: (id) => ipcRenderer.invoke('cxp:delete', { id }),
+
+  alertasList: (incluirLeidas) => ipcRenderer.invoke('alertas:list', { incluir_leidas: incluirLeidas }),
+  alertasContar: () => ipcRenderer.invoke('alertas:contar'),
+  alertasMarcarLeidas: (ids) => ipcRenderer.invoke('alertas:leidas', { ids }),
+  alertasEliminar: (id) => ipcRenderer.invoke('alertas:eliminar', { id }),
+
+  calendarioEventos: (mes) => ipcRenderer.invoke('calendario:eventos', { mes }),
+  flujoCajaGet: (dias) => ipcRenderer.invoke('flujo:caja', { dias }),
+  dashboardFinanciero: (mes) => ipcRenderer.invoke('dashboard:financiero', { mes }),
+  auditList: (opts) => ipcRenderer.invoke('audit:list', opts),
+  auditResumen: () => ipcRenderer.invoke('audit:resumen'),
+  auditReciente: (limite) => ipcRenderer.invoke('audit:reciente', { limite }),
+  archivadosList: () => ipcRenderer.invoke('archivados:list'),
+  estadisticasGet: (meses) => ipcRenderer.invoke('estadisticas:get', { meses }),
+  seguridadSetPin: (pin) => ipcRenderer.invoke('seguridad:setPin', { pin }),
+  seguridadVerificarPin: (pin) => ipcRenderer.invoke('seguridad:verificarPin', { pin }),
+  seguridadPinActivo: () => ipcRenderer.invoke('seguridad:pinActivo'),
+  seguridadClearPin: () => ipcRenderer.invoke('seguridad:clearPin'),
+  historialPropiedad: (id) => ipcRenderer.invoke('historial:propiedad', { id }),
+  historialInquilino: (id) => ipcRenderer.invoke('historial:inquilino', { id }),
+
   whatsappAbrir: (url) => ipcRenderer.invoke('whatsapp:abrir', { url }),
   buscarGlobal: (q) => ipcRenderer.invoke('buscar:global', { q }),
 
@@ -86,6 +118,7 @@ contextBridge.exposeInMainWorld('api', {
 backupRestaurar: () => ipcRenderer.invoke('backup:restaurar'),
 
   pdfExport: (tipo, payload) => ipcRenderer.invoke('export:pdf', { tipo, ...(payload || { }) }),
+  exportDato: (tipo, formato, payload) => ipcRenderer.invoke('export:data', { tipo, formato, ...(payload || { }) }),
 
   onUpdateStatus: (cb) => ipcRenderer.on('update:status', (_e, data) => cb(data)),
   updateCheck: () => ipcRenderer.invoke('update:check'),

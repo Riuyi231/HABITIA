@@ -184,7 +184,7 @@ function runSmoke() {
     }
   }, 15000);
   // Recorrer todas las vistas para renderizarlas y capturar cualquier error.
-  const vistas = ['estudios', 'inquilinos', 'contratos', 'gastos', 'cobros', 'mantenimiento', 'empresa', 'dashboard', 'reporte'];
+  const vistas = ['estudios', 'inquilinos', 'contratos', 'gastos', 'cobros', 'mantenimiento', 'empresa', 'dashboard', 'reporte', 'estadisticas', 'auditoria', 'cxp', 'proveedores', 'flujo', 'calendario'];
   let i = 0;
   const vueltas = setInterval(() => {
     if (i >= vistas.length) {
@@ -408,11 +408,51 @@ ipcMain.handle('muestra:estado', wrap(() => muestra.muestraEstado(db)));
 ipcMain.handle('mantenimiento:list', wrap((d) => negocio.listOrdenes(db, d || {})));
 ipcMain.handle('mantenimiento:save', mutar((d) => negocio.crearOrden(db, d)));
 ipcMain.handle('mantenimiento:cerrar', mutar((d) => { negocio.cerrarOrden(db, d.id, d.costo || 0, d.notas); return true; }));
+ipcMain.handle('mantenimiento:estado', mutar((d) => negocio.cambiarEstadoOrden(db, d.id, d.estado, d)));
 ipcMain.handle('mantenimiento:delete', mutar((d) => { negocio.deleteOrden(db, d.id); return true; }));
 ipcMain.handle('mantenimiento:resumen-estudio', wrap((d) => negocio.resumenMantenimientoEstudio(db, d.id)));
 
 // ---------- IPC: estado de cuenta por inquilino ----------
 ipcMain.handle('estado-cuenta:get', wrap((d) => negocio.estadoCuentaInquilino(db, d.id)));
+
+// ---------- IPC: Fase 2 — proveedores ----------
+ipcMain.handle('proveedores:list', wrap((d) => negocio.listProveedores(db, d.q)));
+ipcMain.handle('proveedores:get', wrap((d) => negocio.getProveedor(db, d.id)));
+ipcMain.handle('proveedores:save', mutar((d) => negocio.saveProveedor(db, d)));
+ipcMain.handle('proveedores:delete', mutar((d) => { negocio.deleteProveedor(db, d.id); return true; }));
+
+// ---------- IPC: Fase 2 — cuentas por pagar ----------
+ipcMain.handle('cxp:list', wrap((d) => negocio.listCuentasPagar(db, d || {})));
+ipcMain.handle('cxp:get', wrap((d) => negocio.getCuentaPagar(db, d.id)));
+ipcMain.handle('cxp:save', mutar((d) => negocio.saveCuentaPagar(db, d)));
+ipcMain.handle('cxp:pagar', mutar((d) => negocio.pagarCuentaPagar(db, d.id, d)));
+ipcMain.handle('cxp:delete', mutar((d) => { negocio.eliminarCuentaPagar(db, d.id); return true; }));
+
+// ---------- IPC: Fase 2 — alertas ----------
+ipcMain.handle('alertas:list', mutar((d) => negocio.listAlertas(db, Boolean(d && d.incluir_leidas))));
+ipcMain.handle('alertas:contar', mutar(() => negocio.contarAlertas(db)));
+ipcMain.handle('alertas:leidas', mutar((d) => negocio.marcarAlertasLeidas(db, d.ids)));
+ipcMain.handle('alertas:eliminar', mutar((d) => { negocio.eliminarAlerta(db, d.id); return true; }));
+
+// ---------- IPC: Fase 2 — calendario, flujo de caja, dashboard, historial ----------
+ipcMain.handle('calendario:eventos', wrap((d) => negocio.eventosCalendario(db, d.mes)));
+ipcMain.handle('flujo:caja', wrap((d) => negocio.flujoCaja(db, d.dias)));
+ipcMain.handle('dashboard:financiero', wrap((d) => negocio.dashboardFinanciero(db, d.mes)));
+
+// ---------- IPC: Fase 3 — auditoría ----------
+ipcMain.handle('audit:list', wrap((d) => negocio.listAuditoria(db, d || {})));
+ipcMain.handle('audit:resumen', wrap(() => negocio.resumenAuditoria(db)));
+ipcMain.handle('audit:reciente', wrap((d) => negocio.actividadReciente(db, d && d.limite)));
+ipcMain.handle('archivados:list', wrap(() => negocio.archivados(db)));
+ipcMain.handle('estadisticas:get', wrap((d) => negocio.estadisticas(db, d && d.meses)));
+
+// ---------- IPC: Fase 3 §6 — seguridad ----------
+ipcMain.handle('seguridad:setPin', mutar((d) => negocio.setPin(db, d.pin)));
+ipcMain.handle('seguridad:verificarPin', wrap((d) => ({ ok: negocio.verificarPin(db, d.pin) })));
+ipcMain.handle('seguridad:pinActivo', wrap(() => ({ activo: negocio.pinActivo(db) })));
+ipcMain.handle('seguridad:clearPin', mutar(() => negocio.clearPin(db)));
+ipcMain.handle('historial:propiedad', wrap((d) => negocio.historialPropiedad(db, d.id)));
+ipcMain.handle('historial:inquilino', wrap((d) => negocio.historialInquilino(db, d.id)));
 ipcMain.handle('estado-cuenta:pdf', noThrow(async (d) => {
   const estado = negocio.estadoCuentaInquilino(db, d.id);
   const buf = await reportes.reporteEstadoCuenta(negocio.getEmpresa(db), estado);
@@ -487,6 +527,36 @@ ipcMain.handle('export:pdf', noThrow(async (payload) => {
   });
   if (canceled || !filePath) return { ok: false, error: 'cancelado' };
   await fs.promises.writeFile(filePath, Buffer.from(buf));
+  return { ok: true, path: filePath };
+}));
+
+// ---------- IPC: exportación Excel / CSV (Fase 3 §3) ----------
+ipcMain.handle('export:data', noThrow(async (payload) => {
+  const exportador = require('./services/exportador');
+  const tiposOk = ['resumen', 'cobros', 'gastos', 'aging', 'rentabilidad', 'cxp', 'proveedores', 'ocupacion', 'contratos', 'mantenimiento', 'financiero', 'anual'];
+  const tipo = String(payload && payload.tipo || '');
+  if (tiposOk.indexOf(tipo) < 0) return { ok: false, error: 'tipo no soportado: ' + tipo };
+  const formato = (payload && payload.formato) === 'csv' ? 'csv' : 'xlsx';
+  const x = exportador.datosDe(tipo, {
+    negocio, db,
+    mes: (payload && payload.mes) || negocio.hoy().slice(0, 7),
+    anio: (payload && payload.anio) || new Date().getFullYear(),
+    empresa: negocio.getEmpresa(db)
+  });
+  const ext = formato === 'csv' ? 'csv' : 'xlsx';
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Exportar ' + (formato === 'csv' ? 'a CSV' : 'a Excel'),
+    defaultPath: x.nombreBase + '.' + ext,
+    filters: [{ name: formato === 'csv' ? 'CSV' : 'Excel', extensions: [ext] }]
+  });
+  if (canceled || !filePath) return { ok: false, error: 'cancelado' };
+  if (formato === 'csv') {
+    await fs.promises.writeFile(filePath, Buffer.from(exportador.aCSV(x), 'utf8'));
+  } else {
+    const wb = await exportador.libro(x, x.titulo);
+    await wb.xlsx.writeFile(filePath);
+  }
+  try { negocio.logAuditoria(db, 'exportar', 'reporte', null, 'Exportó ' + x.titulo + ' como ' + formato.toUpperCase(), usuarioActual()); } catch (_) {}
   return { ok: true, path: filePath };
 }));
 
