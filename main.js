@@ -139,6 +139,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 640,
     title: 'HABITIA',
+    icon: path.join(__dirname, 'resources', 'icono.ico'),
     backgroundColor: '#f4f6fb',
     autoHideMenuBar: true,
     show: !process.argv.includes('--smoke'),
