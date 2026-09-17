@@ -23,7 +23,17 @@ function allToObj(db, sql, params) {
 function run(db, sql, params) { db.run(sql, params || []); }
 
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
-function hoy() { return new Date().toISOString().slice(0, 10); }
+function hoy() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function ultimoDiaMes(mes) {
+  const s = String(mes || '');
+  const m = /^(\d{4})-(\d{2})$/.exec(s);
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]), 0);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 function mesHoy() { return hoy().slice(0, 7); }
 
 // ---------- Fase 3 §5: Auditoría ----------
@@ -371,29 +381,30 @@ function estadoCuota(c) {
 }
 // Devuelve la cuota de cada estudio activo para `mes` ('YYYY-MM'),
 // creándolas si aún no existen (monto = alquiler del estudio).
+function generarCuotaMes(db, mes) {
+  const m = String(mes || mesHoy());
+  if (!/^\d{4}-\d{2}$/.test(m)) return;
+  const hay = allToObj(db, 'SELECT COUNT(*) AS n FROM estudios WHERE activo=1');
+  if (!(hay[0] && Number(hay[0].n) > 0)) return;
+  const dia = diaDePago(db);
+  run(db, `INSERT OR IGNORE INTO alquileres (estudio_id, inquilino_id, mes, monto, fecha_vencimiento)
+           SELECT e.id, e.inquilino_id, ?, e.alquiler +
+                  COALESCE((SELECT SUM(g.monto) FROM gastos_estudio g WHERE g.estudio_id = e.id AND g.activo=1), 0), ?
+           FROM estudios e WHERE e.activo=1`,
+    [m, fechaVencDe(m, dia)]);
+  // Re-sincroniza las cuotas del mes que aún no se pagan: renta + total de gastos fijos.
+  run(db, `UPDATE alquileres SET
+           monto = (SELECT e.alquiler +
+                   COALESCE((SELECT SUM(g.monto) FROM gastos_estudio g WHERE g.estudio_id = e.id AND g.activo=1), 0)
+                   FROM estudios e WHERE e.id = alquileres.estudio_id),
+           inquilino_id = (SELECT e.inquilino_id FROM estudios e WHERE e.id = alquileres.estudio_id),
+           fecha_vencimiento = ?
+           WHERE mes = ? AND pagado = 0`,
+    [fechaVencDe(m, dia), m]);
+}
 function cobrosMes(db, mes) {
   const m = String(mes || mesHoy());
-  const estudios = allToObj(db,
-    `SELECT e.*, i.nombre AS inquilino_nombre, i.whatsapp AS inquilino_whatsapp
-     FROM estudios e LEFT JOIN inquilinos i ON i.id = e.inquilino_id
-     WHERE e.activo = 1 ORDER BY e.nombre`);
-  if (estudios.length) {
-    const dia = diaDePago(db);
-    run(db, `INSERT OR IGNORE INTO alquileres (estudio_id, inquilino_id, mes, monto, fecha_vencimiento)
-             SELECT e.id, e.inquilino_id, ?, e.alquiler +
-                    COALESCE((SELECT SUM(g.monto) FROM gastos_estudio g WHERE g.estudio_id = e.id AND g.activo=1), 0), ?
-             FROM estudios e WHERE e.activo=1`,
-      [m, fechaVencDe(m, dia)]);
-    // Re-sincroniza las cuotas del mes que aún no se pagan: renta + total de gastos fijos.
-    run(db, `UPDATE alquileres SET
-             monto = (SELECT e.alquiler +
-                     COALESCE((SELECT SUM(g.monto) FROM gastos_estudio g WHERE g.estudio_id = e.id AND g.activo=1), 0)
-                     FROM estudios e WHERE e.id = alquileres.estudio_id),
-             inquilino_id = (SELECT e.inquilino_id FROM estudios e WHERE e.id = alquileres.estudio_id),
-             fecha_vencimiento = ?
-             WHERE mes = ? AND pagado = 0`,
-      [fechaVencDe(m, dia), m]);
-  }
+  generarCuotaMes(db, m);
   const rows = allToObj(db,
     `SELECT a.*, e.nombre AS estudio_nombre, e.direccion AS estudio_direccion, e.edificio AS estudio_edificio,
             i.nombre AS inquilino_nombre, i.whatsapp AS inquilino_whatsapp,
@@ -1851,7 +1862,18 @@ function flujoCaja(db, dias) {
     cur[md] = cur[md] || {};
     cur[md][campo] = round2((cur[md][campo] || 0) + Number(m));
   };
-  // Saldo inicial real: recibos cobrados MENOS gastos pagados hasta hoy.
+  // Asegura que existan las cuotas del mes actual y de los meses que tocan el
+  // horizonte, para que la proyección "avance" aunque no se haya abierto Cobros.
+  {
+    const f = new Date();
+    const hasta = new Date(hastaISO + 'T12:00:00');
+    while (true) {
+      generarCuotaMes(db, f.getFullYear() + '-' + String(f.getMonth() + 1).padStart(2, '0'));
+      if (f.getFullYear() > hasta.getFullYear() || (f.getFullYear() === hasta.getFullYear() && f.getMonth() >= hasta.getMonth())) break;
+      f.setMonth(f.getMonth() + 1);
+    }
+  }
+  // Caja acumulada real: todo lo cobrado (recibos y abonos parciales) MENOS todo lo pagado hasta hoy.
   for (const r of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM recibos WHERE anulado=0 AND fecha<=? GROUP BY moneda`, [hoyISO]))
     pasar(r.moneda, 'cobrado', r.m || 0);
   for (const g of allToObj(db, `SELECT moneda, SUM(monto) AS m FROM gastos WHERE estado='pagado' AND fecha<=? GROUP BY moneda`, [hoyISO]))
@@ -1860,27 +1882,38 @@ function flujoCaja(db, dias) {
     `SELECT ab.moneda, SUM(ab.monto) AS m FROM abonos ab JOIN alquileres a ON a.id=ab.alquiler_id
      WHERE strftime('%Y-%m-%d', ab.fecha)<=? AND a.pagado=0 GROUP BY ab.moneda`, [hoyISO]))
     pasar(ab.moneda, 'abonado', ab.m || 0);
-  // Cobros esperados: saldo pendiente de alquileres con vencimiento en el rango (NO contable como disponible).
+  // Rentas por cobrar: cuotas pendientes con vencimiento ya pasado o que vencerá dentro del rango.
+  // (las vencidas se separan para que se vea claro y la proyección avance según cobres a los morosos)
   for (const c of allToObj(db,
-    `SELECT a.moneda, a.monto,
+    `SELECT a.moneda, a.monto, a.fecha_vencimiento, a.mes,
             (SELECT COALESCE(SUM(ab.monto),0) FROM abonos ab WHERE ab.alquiler_id=a.id) AS abonado
-     FROM alquileres a WHERE a.pagado=0 AND a.fecha_vencimiento BETWEEN ? AND ?`, [hoyISO, hastaISO])) {
-    pasar(c.moneda, 'cobros_esperados', Math.max(0, Number(c.monto) - Number(c.abonado)));
+     FROM alquileres a WHERE a.pagado=0`)) {
+    const saldo = Number(c.monto) - Number(c.abonado);
+    if (!(saldo > 0)) continue;
+    // Si la cuota no tiene día de vencimiento, se considera que vence el último día de su mes.
+    let vto = String(c.fecha_vencimiento || '').trim();
+    if (!vto) vto = ultimoDiaMes(c.mes);
+    if (!vto || vto > hastaISO) continue;
+    if (vto < hoyISO) pasar(c.moneda, 'porcobrar_vencido', saldo);
+    else pasar(c.moneda, 'porcobrar_proximo', saldo);
   }
-  // Pagos previstos: cuentas por pagar pendientes ya vencidas o con vencimiento en el rango.
+  // Pagos previstos: cuentas por pagar pendientes (vencidas o con vencimiento en el rango)...
   for (const c of allToObj(db,
     `SELECT moneda, SUM(monto) AS m FROM cuentas_por_pagar
      WHERE pagado=0 AND estado='pendiente' AND fecha_vencimiento <> '' AND fecha_vencimiento IS NOT NULL
        AND fecha_vencimiento <= ? GROUP BY moneda`, [hastaISO]))
     pasar(c.moneda, 'cxp', c.m || 0);
-  // Gastos programados futuros.
+  // ...y gastos programados que ya vencieron o vencen dentro del rango (siguen pendientes).
   for (const g of allToObj(db,
-    `SELECT moneda, SUM(monto) AS m FROM gastos WHERE estado='programado' AND fecha BETWEEN ? AND ? GROUP BY moneda`, [hoyISO, hastaISO]))
+    `SELECT moneda, SUM(monto) AS m FROM gastos WHERE estado='programado' AND fecha <> '' AND fecha <= ? GROUP BY moneda`, [hastaISO]))
     pasar(g.moneda, 'gastos_programados', g.m || 0);
   for (const md of MONEDAS) {
     if (!cur[md]) continue;
     const c = cur[md];
     c.disponible = round2(c.cobrado + c.abonado - c.gastado);
+    c.cobros_esperados = round2((c.porcobrar_vencido || 0) + (c.porcobrar_proximo || 0));
+    c.porcobrar_vencido = round2(c.porcobrar_vencido || 0);
+    c.porcobrar_proximo = round2(c.porcobrar_proximo || 0);
     c.proyectado = round2(c.disponible + c.cobros_esperados - c.cxp - c.gastos_programados);
     porMoneda[md] = c;
   }

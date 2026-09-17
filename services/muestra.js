@@ -135,9 +135,10 @@ function seedMuestra(db) {
   for (let off = 0; off <= 4; off++) {
     for (const c of ocupados) {
       const estaPagado = papel[c.i][off] === 1;
-      db.run('INSERT INTO alquileres (estudio_id,inquilino_id,mes,monto,pagado,fecha_pago,metodo_pago,moneda) VALUES (?,?,?,?,?,?,?,?)',
+      db.run('INSERT INTO alquileres (estudio_id,inquilino_id,mes,monto,pagado,fecha_pago,metodo_pago,moneda,fecha_vencimiento) VALUES (?,?,?,?,?,?,?,?,?)',
         [eIds[c.e], iIds[c.i], mesDe(off), cuota[c.e], estaPagado ? 1 : 0,
-         estaPagado ? diaDe(off, 3 + (off % 4)) : '', estaPagado ? 'efectivo' : '', estudios.find((x) => x.nombre === c.e).moneda]);
+         estaPagado ? diaDe(off, 3 + (off % 4)) : '', estaPagado ? 'efectivo' : '', estudios.find((x) => x.nombre === c.e).moneda,
+         diaDe(off, 5)]);
       const id = lastId(db);
       ids.alquileres.push(id);
       if (off === 0) aIds[c.e] = id;

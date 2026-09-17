@@ -58,7 +58,7 @@ const Wizard = (() => {
       <div class="wz-paso">
         <h3>¡Bienvenido a HABITIA!</h3>
         <p>Este pequeño asistente te ayuda a dejar listo tu negocio de alquileres en ~1 minuto: los datos de tu empresa, tu primera propiedad, un inquilino y su contrato.</p>
-        <p class="wz-nota">No tienes que completarlo todo ahora: <b>“Configurar después”</b> no borra nada, solo lo pospone.</p>
+        <p class="wz-nota">No tienes que completarlo todo ahora: <b>“Configurar después”</b> no borra nada, solo lo pospone. Volverá a aparecer al abrir el programa hasta que configures tu negocio.</p>
         <div class="wz-acciones">
           <button class="btn" onclick="Wizard.abrirPaso('empresa')">Comenzar</button>
           <button class="btn secundario" onclick="Wizard.configurarDespues()">Configurar después</button>
@@ -255,9 +255,8 @@ const Wizard = (() => {
     await Wizard.terminar('¡Listo! Empezaste con buen pie.');
   }
 
-  async function configurarDespues() {
-    await marcarHecho();
-    toast('Puedes configurarlo en cualquier momento desde el menú');
+async function configurarDespues() {
+    toast('Lo pospusiste: volverá a aparecer al abrir el programa hasta que configures tu negocio.');
     cerrar();
   }
 
@@ -289,11 +288,12 @@ const Wizard = (() => {
     if (fns[paso]) fns[paso]();
   }
 
-  async function iniciar() {
+async function iniciar() {
     if (abierto) return;
-    if (await estaHecho()) return;
     try {
-      // Solo si la app está vacía (nada configurado) se muestra el asistente.
+      // Se muestra SIEMPRE que el negocio no esté configurado (empresa sin nombre y sin
+      // estudios/inquilinos). "Configurar después" solo lo pospone: volverá a aparecer
+      // al abrir el programa hasta que se configure.
       const empresa = ((await window.api.empresaGet()).data) || {};
       const estudios = ((await window.api.estudiosList({ q: '' })).data) || [];
       const inquilinos = ((await window.api.inquilinosList({ q: '' })).data) || [];

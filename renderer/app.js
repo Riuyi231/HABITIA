@@ -21,10 +21,13 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&':
 
 let empresa = { nombre: '', rnc: '', telefono: '', email: '', direccion: '' };
 let vistaActual = 'dashboard';
-let mesActual = new Date().toISOString().slice(0, 7);
+const hoyISO = () => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+};
+let mesActual = hoyISO().slice(0, 7);
 
 const NOMBRE_MES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-const hoyISO = () => new Date().toISOString().slice(0, 10);
 const horaLarga = (iso) => {
   if (!iso) return '';
   const d = new Date(iso);
@@ -1475,14 +1478,18 @@ async function anularReciboUI(id) {
 }
 
 async function viewGastos() {
-  vistaActual = 'gastos';
-  titulo('Gastos');
+  vistaActual = 'pagos';
+  titulo('Gastos y facturas · pagados y programados');
   const gF = window.__gastosFiltro || {};
   const gastos = (await window.api.gastosList({ mes: mesActual, categoria: gF.categoria || '', subcategoria: gF.subcategoria || '', proveedor: gF.proveedor || '', moneda: gF.moneda || '', estado: gF.estado || '' })).data;
   const pg = paginar('gastos', gastos);
   const totales = {};
   gastos.forEach((g) => { totales[monedaOkUI(g.moneda)] = round2sum(totales[monedaOkUI(g.moneda)], g.monto); });
   $('#content').innerHTML = `
+    <div class="segment" style="margin-bottom:14px">
+      <button type="button" class="seg activo" onclick="irPagos('gastos')">💸 Pagados / programados</button>
+      <button type="button" class="seg" onclick="irPagos('cxp')">🧾 Facturas por pagar</button>
+    </div>
     <div class="btn-row">
       ${selectorMes()}
       <button class="btn" onclick="formGasto()">+ Nuevo gasto</button>
@@ -1510,6 +1517,7 @@ async function viewGastos() {
       <button class="btn secundario" onclick="exportarDato('gastos','csv')">CSV</button>
     </div>
     <div class="card">
+      <div class="detalle" style="padding:10px 12px 4px">💡 Aquí registras un pago <b>ya hecho</b> o programado directamente. Si recibes una factura de un proveedor que vas a pagar después y tiene vencimiento, cámbiate a la pestaña <b>Facturas por pagar</b> (🧾): al marcarla pagada se vuelve un gasto aquí automáticamente.</div>
       <div class="tabla-scroll">
       <table>
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Estudio</th><th>Proveedor</th><th>Concepto</th><th>Método</th><th class="num">Monto</th><th>Estado</th><th></th></tr></thead>
@@ -1996,14 +2004,15 @@ async function borrarOrden(id) {
 // ============================================================
 //                    REPORTE FINANCIERO DEL MES
 // ============================================================
-function cambiarModoReporte(modo) {
+function irReportes(modo) {
   window.__reporteModo = modo;
-  viewReporte();
+  window.__reportesTab = modo === 'estadisticas' ? 'estadisticas' : 'reporte';
+  vista(modo === 'estadisticas' ? 'estadisticas' : 'reporte');
 }
 async function viewReporte() {
-  vistaActual = 'reporte';
+  vistaActual = 'reportes';
   const modo = window.__reporteModo || 'mensual';
-  titulo(modo === 'anual' ? 'Reporte anual' : 'Reporte financiero del mes');
+  titulo(modo === 'anual' ? 'Reportes · anual' : 'Reportes · mensual');
   const anioSel = window.__anioReporte || new Date().getFullYear();
   const aniosDispon = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
   const f = (await window.api.reporteFinanciero(mesActual)).data;
@@ -2076,8 +2085,9 @@ async function viewReporte() {
   $('#content').innerHTML = `
     <div class="btn-row" style="margin-bottom:16px">
       <div class="segment">
-        <button type="button" class="seg${modo === 'mensual' ? ' activo' : ''}" onclick="cambiarModoReporte('mensual')">Mensual</button>
-        <button type="button" class="seg${modo === 'anual' ? ' activo' : ''}" onclick="cambiarModoReporte('anual')">Anual</button>
+        <button type="button" class="seg${modo === 'mensual' ? ' activo' : ''}" onclick="irReportes('mensual')">Mensual</button>
+        <button type="button" class="seg${modo === 'anual' ? ' activo' : ''}" onclick="irReportes('anual')">Anual</button>
+        <button type="button" class="seg${(window.__reportesTab || 'reporte') === 'estadisticas' ? ' activo' : ''}" onclick="irReportes('estadisticas')">Evolución</button>
       </div>
       <span style="flex:1"></span>
       ${modo === 'anual'
@@ -2152,13 +2162,15 @@ async function visualizar() {
       case 'inquilinos': return viewInquilinos();
       case 'cobros': return viewCobros();
       case 'cxp': return viewCxp();
+      case 'gastos': return viewGastos();
+      case 'pagos': return (window.__pagosTab || 'gastos') === 'cxp' ? viewCxp() : viewGastos();
       case 'proveedores': return viewProveedores();
       case 'calendario': return viewCalendario();
       case 'flujo': return viewFlujo();
       case 'contratos': return viewContratos();
-      case 'gastos': return viewGastos();
       case 'reporte': return viewReporte();
       case 'estadisticas': return viewEstadisticas();
+      case 'reportes': return (window.__reportesTab || 'reporte') === 'estadisticas' ? viewEstadisticas() : viewReporte();
       case 'mantenimiento': return viewMantenimiento();
       case 'auditoria': return viewAuditoria();
       case 'empresa': return viewEmpresa();
@@ -2169,6 +2181,10 @@ async function visualizar() {
   }
 }
 function vista(nombre) { vistaActual = nombre; visualizar(); }
+function irPagos(tab) {
+  window.__pagosTab = tab;
+  vista(tab === 'cxp' ? 'cxp' : 'gastos');
+}
 
 document.addEventListener('click', (e) => {
   const nav = e.target.closest('.nav-item');
@@ -2179,8 +2195,8 @@ document.addEventListener('click', (e) => {
 //              FASE 2: CUENTAS POR PAGAR
 // ============================================================
 async function viewCxp() {
-  vistaActual = 'cxp';
-  titulo('Cuentas por pagar');
+  vistaActual = 'pagos';
+  titulo('Gastos y facturas · por pagar');
   const f = window.__cxpFiltro || {};
   const cxp = (await window.api.cuentasPagarList({ estado: f.estado || '', categoria: f.categoria || '', pendientes: f.pendientes ? true : undefined })).data || [];
   const pendientes = cxp.filter((c) => c.estado === 'pendiente');
@@ -2189,6 +2205,10 @@ async function viewCxp() {
   const porMoneda = {};
   pendientes.forEach((c) => { porMoneda[c.moneda] = round2sum(porMoneda[c.moneda], c.monto); });
   $('#content').innerHTML = `
+    <div class="segment" style="margin-bottom:14px">
+      <button type="button" class="seg" onclick="irPagos('gastos')">💸 Pagados / programados</button>
+      <button type="button" class="seg activo" onclick="irPagos('cxp')">🧾 Facturas por pagar</button>
+    </div>
     <div class="btn-row">
       <button class="btn" onclick="formCuentaPagar()">+ Nueva cuenta</button>
       <button class="btn secundario" onclick="exportarDato('cxp','xlsx')">Excel</button>
@@ -2207,6 +2227,7 @@ async function viewCxp() {
       <span class="detalle" style="align-self:center">${pendientes.length} pendientes · ${Object.entries(porMoneda).map(([k, v]) => `<b>${k} ${fmt(v)}</b>`).join(' · ')}</span>
     </div>
     <div class="card">
+      <div class="detalle" style="padding:10px 12px 4px">💡 Una cuenta por pagar es una <b>factura que debes</b> (proveedor + vencimiento). Al marcarla como pagada se registra sola en <b>Pagados / programados</b> (💸). Usa esta pestaña para anotar lo que falta por pagar, no lo ya pagado.</div>
       ${cxp.length
         ? `<div class="tabla-scroll"><table>
             <thead><tr><th>Vence</th><th>Categoría</th><th>Concepto</th><th>Proveedor</th><th>Propiedad</th><th class="num">Monto</th><th>Estado</th><th>Forma de pago</th><th></th></tr></thead>
@@ -2498,25 +2519,27 @@ async function viewFlujo() {
     </div>
     <div class="card">
       <h3>⚠️ Importante</h3>
-      <div class="detalle">El <b>disponible</b> solo considera lo ya cobrado y pagado. Los <b>cobros esperados</b> son dinero que aún no has recibido: no se muestran como disponible. No se suman monedas distintas.</div>
+      <div class="detalle">La <b>caja acumulada</b> suma todo lo cobrado y pagado desde que usas HABITIA (es lo que tienes "en mano" hoy). Las <b>rentas por cobrar</b> son dinero que aún no has recibido (incluyen lo que te deben los morosos). No se mezclan monedas distintas.</div>
     </div>
     <div class="grid grid-2">
       ${Object.entries(f.porMoneda || {}).map(([md, c]) => `
         <div class="card">
           <h3>${md} <span class="detalle" style="font-weight:400">(${md === 'RD$' ? 'Peso dominicano' : 'Dólar'})</span></h3>
           <div class="grid grid-2" style="margin-bottom:10px">
-            <div class="card kpi positivo"><div class="label">Disponible hoy</div><div class="valor">${MN$(c.disponible, md, 0)}</div></div>
+            <div class="card kpi positivo"><div class="label">Caja acumulada</div><div class="valor">${MN$(c.disponible, md, 0)}</div></div>
             <div class="card kpi ${c.proyectado < 0 ? 'negativo' : ''}"><div class="label">Proyectado ${dias}d</div><div class="valor">${MN$(c.proyectado, md, 0)}</div></div>
           </div>
+          <div class="detalle" style="margin-bottom:8px"><b>${MN$(c.cobros_esperados, md, 0)}</b> por cobrar: <b style="color:var(--rosado)">${MN$(c.porcobrar_vencido, md, 0)} vencidas</b> · <b>${MN$(c.porcobrar_proximo, md, 0)} próximas</b></div>
           <table>
             <tbody>
-              <tr><td>✅ Cobrado hasta hoy</td><td class="num">+ ${MN$(c.cobrado, md, 0)}</td></tr>
-              <tr><td>🧩 Abonos (en cuotas parciales)</td><td class="num">+ ${MN$(c.abonado, md, 0)}</td></tr>
+              <tr><td>✅ Cobrado hasta hoy (recibos)</td><td class="num">+ ${MN$(c.cobrado, md, 0)}</td></tr>
+              <tr><td>🧩 Abonos (pagos parciales)</td><td class="num">+ ${MN$(c.abonado, md, 0)}</td></tr>
               <tr><td>💸 Gastos pagados hasta hoy</td><td class="num">− ${MN$(c.gastado, md, 0)}</td></tr>
-              <tr><td style="border-top:1px solid var(--borde-suave)"><b>Disponible</b></td><td class="num" style="border-top:1px solid var(--borde-suave)"><b>${MN$(c.disponible, md, 0)}</b></td></tr>
-              <tr><td>⏳ Cobros esperados (vence en ${dias} días)</td><td class="num">+ ${MN$(c.cobros_esperados, md, 0)}</td></tr>
-              <tr><td>🧾 Cuentas por pagar en ${dias} días</td><td class="num">− ${MN$(c.cxp, md, 0)}</td></tr>
-              <tr><td>📅 Gastos programados</td><td class="num">− ${MN$(c.gastos_programados, md, 0)}</td></tr>
+              <tr><td style="border-top:1px solid var(--borde-suave)"><b>Caja acumulada</b></td><td class="num" style="border-top:1px solid var(--borde-suave)"><b>${MN$(c.disponible, md, 0)}</b></td></tr>
+              <tr><td>⏰ Rentas vencidas sin cobrar</td><td class="num">+ ${MN$(c.porcobrar_vencido, md, 0)}</td></tr>
+              <tr><td>⏳ Rentas que vencen en ${dias} días</td><td class="num">+ ${MN$(c.porcobrar_proximo, md, 0)}</td></tr>
+              <tr><td>🧾 Cuentas por pagar (vencidas/por vencer)</td><td class="num">− ${MN$(c.cxp, md, 0)}</td></tr>
+              <tr><td>📅 Gastos programados pendientes</td><td class="num">− ${MN$(c.gastos_programados, md, 0)}</td></tr>
               <tr><td style="border-top:1px solid var(--borde-suave)"><b>Proyectado</b></td><td class="num" style="border-top:1px solid var(--borde-suave)"><b style="color:${c.proyectado < 0 ? 'var(--rosado)' : 'var(--verde)'}">${MN$(c.proyectado, md, 0)}</b></td></tr>
             </tbody>
           </table>
@@ -2755,8 +2778,8 @@ async function verArchivados() {
 }
 const CATEG_COLOR = { agua: '#0ea5e9', luz: '#f59e0b', internet: '#8b5cf6', gas: '#f97316', impuesto_sep: '#64748b', seguro: '#14b8a6', mantenimiento: '#e11d48', otros: '#94a3b8' };
 async function viewEstadisticas() {
-  vistaActual = 'estadisticas';
-  titulo('Estadísticas');
+  vistaActual = 'reportes';
+  titulo('Reportes · evolución');
   const n = Number(window.__estMes || 12) || 12;
   const e = (await window.api.estadisticasGet(n)).data;
   const monedas = Object.keys(e.seriePorMoneda || {});
@@ -2771,6 +2794,11 @@ async function viewEstadisticas() {
   const ocupO = e.ocupacion ? Number(e.ocupacion.ocupado || 0) : 0;
   const rend = e.rendimiento || {};
   $('#content').innerHTML = `
+    <div class="segment" style="margin-bottom:14px">
+      <button type="button" class="seg" onclick="irReportes('mensual')">Mensual</button>
+      <button type="button" class="seg" onclick="irReportes('anual')">Anual</button>
+      <button type="button" class="seg activo" onclick="irReportes('estadisticas')">Evolución</button>
+    </div>
     <div class="btn-row" style="margin-bottom:14px">
       <span class="detalle" style="align-self:center">Rango:</span>
       ${[3, 6, 12, 24].map((m) => `<button class="btn ${m === n ? '' : 'secundario'} pequeño" onclick="window.__estMes=${m};vista('estadisticas')">${m}m</button>`).join(' ')}
